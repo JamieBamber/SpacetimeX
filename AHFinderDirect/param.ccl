@@ -369,7 +369,7 @@ real smoothing_factor[101] "smoothen (remove higher multipole moments) the surfa
 
 keyword initial_guess_method[101] \
   "method used to set up initial guess for apparent horizon shape" \
-  STEERABLE=recover
+  STEERABLE=ALWAYS
 {
 "read from named file"	:: "read from explicitly-named input file"
 "read from h file"	:: \
@@ -425,7 +425,7 @@ real initial_guess__Kerr_Kerr__spin[101] "dimensionless spin a=J/m^2 of Kerr BH"
 } 0.6
 
 # parameters for initial_guess_method = "Kerr/Kerr-Schild"
-real initial_guess__Kerr_KerrSchild__x_posn[101] "x coordinate of Kerr BH" STEERABLE=recover
+real initial_guess__Kerr_KerrSchild__x_posn[101] "x coordinate of Kerr BH" STEERABLE=ALWAYS
 {
 *:* :: "any real number"
 } 0.0
@@ -450,19 +450,19 @@ real initial_guess__Kerr_KerrSchild__spin[101] "dimensionless spin a=J/m^2 of Ke
 } 0.6
 
 # parameters for initial_guess_method = "sphere"
-real initial_guess__coord_sphere__x_center[101] "x coordinate of sphere center" STEERABLE=recover
+real initial_guess__coord_sphere__x_center[101] "x coordinate of sphere center" STEERABLE=ALWAYS
 {
 *:* :: "any real number"
 } 0.0
-real initial_guess__coord_sphere__y_center[101] "y coordinate of sphere center" STEERABLE=recover
+real initial_guess__coord_sphere__y_center[101] "y coordinate of sphere center" STEERABLE=ALWAYS
 {
 *:* :: "any real number"
 } 0.0
-real initial_guess__coord_sphere__z_center[101] "z coordinate of sphere center" STEERABLE=recover
+real initial_guess__coord_sphere__z_center[101] "z coordinate of sphere center" STEERABLE=ALWAYS
 {
 *:* :: "any real number"
 } 0.0
-real initial_guess__coord_sphere__radius[101] "radius of sphere" STEERABLE=recover
+real initial_guess__coord_sphere__radius[101] "radius of sphere" STEERABLE=ALWAYS
 {
 (0.0:* :: "any real number > 0.0"
 } 2.0

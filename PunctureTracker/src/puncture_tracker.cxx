@@ -18,8 +18,6 @@ static PunctureContainer *g_punctures = nullptr;
 
 static int previous_iteration = 0;
 
-const int max_num_tracked = 10;
-
 static int getCarpetXFinestLevel() {
   int type = 0;
   const void *const value =
@@ -70,17 +68,24 @@ extern "C" void PunctureTracker_Init(CCTK_ARGUMENTS) {
 
   pt_num_tracked[0] = 0;
   pt_num_groups[0] = 0;
-  for (int n = 0; n < max_num_tracked; ++n) {
+  for (int n = 0; n < npunctures; ++n) {
     if (track[n]) {
       pt_loc_t[n] = cctk_time;
-      pt_loc_x[n] = initial_x[n];
-      pt_loc_y[n] = initial_y[n];
-      pt_loc_z[n] = initial_z[n];
+      if (initialize_using_BHClusterX){
+        pt_loc_x[n] = posx[n];
+        pt_loc_y[n] = posy[n];
+        pt_loc_z[n] = posz[n];  
+        pt_mass[n] = mass[n];
+      } else {
+        pt_loc_x[n] = initial_x[n];
+        pt_loc_y[n] = initial_y[n];
+        pt_loc_z[n] = initial_z[n];
+        pt_mass[n] = puncture_mass[n];
+      }
       pt_vel_t[n] = cctk_time;
       pt_vel_x[n] = 0.0;
       pt_vel_y[n] = 0.0;
       pt_vel_z[n] = 0.0;
-      pt_mass[n] = puncture_mass[n];
       pt_eta_weight[n] = puncture_eta_weight[n];
       ++pt_num_tracked[0];
     } else {
@@ -113,7 +118,7 @@ extern "C" void PunctureTracker_Setup(CCTK_ARGUMENTS) {
   if (g_punctures == nullptr) {
     g_punctures = new PunctureContainer();
 
-    for (int n = 0; n < max_num_tracked; ++n) {
+    for (int n = 0; n < npunctures; ++n) {
       if (track[n]) {
         g_punctures->getTime().push_back(pt_loc_t[n]);
         g_punctures->getLocation()[0].push_back(pt_loc_x[n]);
@@ -150,7 +155,7 @@ extern "C" void PunctureTracker_Setup(CCTK_ARGUMENTS) {
 
   pt_num_tracked[0] = nPunctures;
   pt_num_groups[0] = CCTK_INT(g_punctures->getGroupMass().size());
-  for (int n = 0; n < max_num_tracked; ++n) {
+  for (int n = 0; n < npunctures; ++n) {
     pt_group_membership[n] = -1;
     pt_group_t[n] = 0.0;
     pt_group_x[n] = 0.0;
@@ -292,7 +297,7 @@ extern "C" void PunctureTracker_Track(CCTK_ARGUMENTS) {
   // Write to pt_loc_foo and pt_vel_foo
   pt_num_tracked[0] = nPunctures;
   pt_num_groups[0] = CCTK_INT(g_punctures->getGroupMass().size());
-  for (int i = 0; i < max_num_tracked; ++i) {
+  for (int i = 0; i < npunctures; ++i) {
     pt_group_membership[i] = -1;
     pt_group_t[i] = 0.0;
     pt_group_x[i] = 0.0;

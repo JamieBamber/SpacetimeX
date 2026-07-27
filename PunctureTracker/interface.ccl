@@ -8,17 +8,17 @@ USES INCLUDE HEADER: loop_device.hxx
 
 PUBLIC:
 
-CCTK_REAL pt_loc[10] TYPE=scalar
+CCTK_REAL pt_loc[100] TYPE=scalar
 {
 	pt_loc_t pt_loc_x pt_loc_y pt_loc_z
 } "Location of punctures"
 
-CCTK_REAL pt_vel[10] TYPE=scalar
+CCTK_REAL pt_vel[100] TYPE=scalar
 {
   pt_vel_t pt_vel_x pt_vel_y pt_vel_z
 } "Velocity of punctures"
 
-CCTK_REAL pt_properties[10] TYPE=scalar
+CCTK_REAL pt_properties[100] TYPE=scalar
 {
   pt_mass pt_eta_weight
 } "Properties of tracked punctures"
@@ -43,7 +43,7 @@ CCTK_REAL pt_group_loc[10] TYPE=scalar
   pt_group_t pt_group_x pt_group_y pt_group_z
 } "Location of effective grouped sources"
 
-CCTK_REAL pt_group_properties[10] TYPE=scalar
+CCTK_REAL pt_group_properties[100] TYPE=scalar
 {
   pt_group_mass pt_group_eta_weight
 } "Properties of effective grouped sources"
