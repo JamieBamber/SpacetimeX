@@ -1,6 +1,7 @@
 # Schedule definitions for thorn AHFinderDirect
 # $Header$
-storage: ah_radius ah_origin ah_centroid ah_flags
+storage: ah_radius ah_origin ah_centroid ah_flags ah_lifecycle
+storage: ah_candidate_times ah_masses ah_candidate_parent
 storage: ahmask[1]
 
 #
@@ -11,7 +12,8 @@ schedule AHFinderDirect_setup at CCTK_BASEGRID        \
    {
    lang: C
    options: global
-   WRITES: AHFinderDirect::ah_centroid, ah_flags
+   WRITES: AHFinderDirect::ah_centroid, ah_flags, ah_lifecycle
+   WRITES: AHFinderDirect::ah_candidate_times, ah_masses, ah_candidate_parent
    } "setup data structures"
 
 schedule AHFinderDirect_import_mask at CCTK_POSTREGRIDINITIAL \
@@ -21,7 +23,6 @@ schedule AHFinderDirect_import_mask at CCTK_POSTREGRIDINITIAL \
  WRITES: AHFinderDirect::ahmask(everywhere)
  options: local
  } "import the excision mask"
-
 
 schedule AHFinderDirect_import_mask at CCTK_INITIAL \
  before AHFinderDirect_find_horizons

@@ -807,6 +807,27 @@ void BH_diagnostics::save(CCTK_ARGUMENTS,
   ah_really_initial_find_flag[horizon_number-1] = AH_data.really_initial_find_flag;
   ah_search_flag             [horizon_number-1] = AH_data.search_flag;
   ah_found_flag              [horizon_number-1] = AH_data.found_flag;
+  ah_status                  [horizon_number-1] = AH_data.status;
+  ah_has_been_found          [horizon_number-1] = AH_data.has_been_found;
+  ah_inside_confirmed_merger [horizon_number-1]
+      = AH_data.inside_confirmed_merger;
+  ah_candidate_creation_iteration[horizon_number-1]
+      = AH_data.candidate_creation_iteration;
+  ah_candidate_creation_time[horizon_number-1]
+      = AH_data.candidate_creation_time;
+  ah_mass[horizon_number-1] = AH_data.mass;
+  ah_candidate_failed_searches[horizon_number-1]
+      = AH_data.candidate_failed_searches;
+  ah_candidate_inactive_checks[horizon_number-1]
+      = AH_data.candidate_inactive_checks;
+  ah_candidate_parent_count[horizon_number-1]
+      = CCTK_INT(AH_data.parent_horizons.size());
+  for (int parent = 0; parent < N_horizons; ++parent) {
+    ah_candidate_parent[parent + N_horizons * (horizon_number-1)]
+        = parent < int(AH_data.parent_horizons.size())
+              ? AH_data.parent_horizons[parent]
+              : 0;
+  }
   if (verbose_info.print_algorithm_details) {
     printf ("AHF BH_diagnostics::save[%d] initial_find_flag=%d\n",        horizon_number, (int) AH_data.initial_find_flag);
     printf ("AHF BH_diagnostics::save[%d] really_initial_find_flag=%d\n", horizon_number, (int) AH_data.really_initial_find_flag);
@@ -862,6 +883,46 @@ void BH_diagnostics::load(CCTK_ARGUMENTS,
   AH_data.really_initial_find_flag = ah_really_initial_find_flag[horizon_number-1];
   AH_data.search_flag              = ah_search_flag             [horizon_number-1];
   AH_data.found_flag               = ah_found_flag              [horizon_number-1];
+  const CCTK_INT saved_status = ah_status[horizon_number-1];
+  if (saved_status < horizon_status__unused ||
+      saved_status > horizon_status__confirmed)
+  {
+    CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+               "Invalid checkpointed lifecycle status %d for horizon %d",
+               int(saved_status), horizon_number);
+  }
+  AH_data.status = static_cast<enum horizon_status>(saved_status);
+  AH_data.has_been_found = ah_has_been_found[horizon_number-1] != 0;
+  AH_data.inside_confirmed_merger =
+      ah_inside_confirmed_merger[horizon_number-1] != 0;
+  AH_data.candidate_creation_iteration =
+      ah_candidate_creation_iteration[horizon_number-1];
+  AH_data.candidate_creation_time =
+      ah_candidate_creation_time[horizon_number-1];
+  AH_data.mass = ah_mass[horizon_number-1];
+  AH_data.candidate_failed_searches =
+      ah_candidate_failed_searches[horizon_number-1];
+  AH_data.candidate_inactive_checks =
+      ah_candidate_inactive_checks[horizon_number-1];
+  const CCTK_INT parent_count =
+      ah_candidate_parent_count[horizon_number-1];
+  if (parent_count < 0 || parent_count > N_horizons) {
+    CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+               "Invalid checkpointed parent count %d for horizon %d",
+               int(parent_count), horizon_number);
+  }
+  AH_data.parent_horizons.clear();
+  for (int parent = 0; parent < parent_count; ++parent) {
+    const CCTK_INT parent_hn =
+        ah_candidate_parent[parent + N_horizons * (horizon_number-1)];
+    if (parent_hn < 1 || parent_hn > N_horizons ||
+        parent_hn == horizon_number) {
+      CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+                 "Invalid checkpointed parent %d for horizon %d",
+                 int(parent_hn), horizon_number);
+    }
+    AH_data.parent_horizons.push_back(parent_hn);
+  }
   if (verbose_info.print_algorithm_details) {
     printf ("AHF BH_diagnostics::load[%d] initial_find_flag=%d\n",        horizon_number, (int) AH_data.initial_find_flag);
     printf ("AHF BH_diagnostics::load[%d] really_initial_find_flag=%d\n", horizon_number, (int) AH_data.really_initial_find_flag);

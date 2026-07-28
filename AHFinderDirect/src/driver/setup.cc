@@ -20,6 +20,7 @@
 #include <math.h>
 #include <string.h>
 
+#include <algorithm>
 #include <vector>
 
 #include "util_Table.h"
@@ -219,6 +220,248 @@ extern struct state state;
 
 //******************************************************************************
 
+std::vector<int>
+canonical_parent_group(const std::vector<int>& parent_horizons)
+{
+  std::vector<int> canonical = parent_horizons;
+  std::sort(canonical.begin(), canonical.end());
+  return canonical;
+}
+
+//******************************************************************************
+
+bool same_parent_group(const std::vector<int>& parents_a,
+                       const std::vector<int>& parents_b)
+{
+  if (parents_a.size() != parents_b.size()) {
+    return false;
+  }
+  return canonical_parent_group(parents_a) ==
+         canonical_parent_group(parents_b);
+}
+
+//******************************************************************************
+
+int find_horizon_with_parent_group(
+    const std::vector<int>& parent_horizons)
+{
+  if (parent_horizons.size() < 2) {
+    return 0;
+  }
+
+  for (int hn = 1; hn <= state.N_horizons; ++hn) {
+    const struct AH_data& AH_data = *state.AH_data_array[hn];
+    if ((AH_data.status == horizon_status__candidate ||
+         AH_data.status == horizon_status__confirmed) &&
+        same_parent_group(AH_data.parent_horizons, parent_horizons)) {
+      return hn;
+    }
+  }
+  return 0;
+}
+
+//******************************************************************************
+
+int find_unused_horizon_slot()
+{
+  for (int hn = 1; hn <= state.N_horizons; ++hn) {
+    if (state.AH_data_array[hn]->status == horizon_status__unused) {
+      return hn;
+    }
+  }
+  return 0;
+}
+
+//******************************************************************************
+
+void initialize_candidate_slot(
+    CCTK_ARGUMENTS,
+    const int candidate_hn,
+    const std::vector<int>& parent_horizons,
+    const fp candidate_origin_x,
+    const fp candidate_origin_y,
+    const fp candidate_origin_z,
+    const fp candidate_radius)
+{
+  DECLARE_CCTK_ARGUMENTS;
+  DECLARE_CCTK_PARAMETERS;
+
+  if (candidate_hn < 1 || candidate_hn > N_horizons) {
+    CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+               "Candidate horizon number %d is outside the valid range 1:%d",
+               candidate_hn, int(N_horizons));
+  }
+  if (parent_horizons.size() < 2) {
+    CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+               "Candidate horizon %d must have at least two parents",
+               candidate_hn);
+  }
+  if (!isfinite(candidate_origin_x) || !isfinite(candidate_origin_y) ||
+      !isfinite(candidate_origin_z) || !isfinite(candidate_radius) ||
+      candidate_radius <= 0.0) {
+    CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+               "Candidate horizon %d has an invalid origin or radius",
+               candidate_hn);
+  }
+
+  struct AH_data& candidate = *state.AH_data_array[candidate_hn];
+  if (candidate.status != horizon_status__unused) {
+    CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+               "Cannot initialize horizon %d as a candidate: slot status is %d",
+               candidate_hn, int(candidate.status));
+  }
+  const int duplicate_hn =
+      find_horizon_with_parent_group(parent_horizons);
+  if (duplicate_hn != 0) {
+    CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+               "Cannot initialize candidate horizon %d: horizon %d already "
+               "represents the same parent group",
+               candidate_hn, duplicate_hn);
+  }
+
+  for (std::vector<int>::size_type i = 0; i < parent_horizons.size(); ++i) {
+    const int parent_hn = parent_horizons[i];
+    if (parent_hn < 1 || parent_hn > N_horizons ||
+        parent_hn == candidate_hn) {
+      CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+                 "Candidate horizon %d has invalid parent horizon %d",
+                 candidate_hn, parent_hn);
+    }
+    const struct AH_data& parent = *state.AH_data_array[parent_hn];
+    if (!parent.has_been_found ||
+        (parent.status != horizon_status__individual &&
+         parent.status != horizon_status__confirmed)) {
+      CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+                 "Candidate horizon %d has ineligible parent horizon %d",
+                 candidate_hn, parent_hn);
+    }
+    for (std::vector<int>::size_type j = 0; j < i; ++j) {
+      if (parent_horizons[j] == parent_hn) {
+        CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+                   "Candidate horizon %d lists parent %d more than once",
+                   candidate_hn, parent_hn);
+      }
+    }
+  }
+
+  patch_system& ps = *candidate.ps_ptr;
+  ps.origin_x(candidate_origin_x);
+  ps.origin_y(candidate_origin_y);
+  ps.origin_z(candidate_origin_z);
+
+  candidate.initial_guess_info.method = initial_guess__coord_sphere;
+  candidate.initial_guess_info.reset_horizon_after_not_finding = true;
+  candidate.initial_guess_info.coord_sphere_info.x_center = candidate_origin_x;
+  candidate.initial_guess_info.coord_sphere_info.y_center = candidate_origin_y;
+  candidate.initial_guess_info.coord_sphere_info.z_center = candidate_origin_z;
+  candidate.initial_guess_info.coord_sphere_info.radius = candidate_radius;
+
+  fp candidate_mass = 0.0;
+  for (std::vector<int>::const_iterator parent_hn =
+           parent_horizons.begin();
+       parent_hn != parent_horizons.end(); ++parent_hn) {
+    candidate_mass += state.AH_data_array[*parent_hn]->mass;
+  }
+  if (!isfinite(candidate_mass) || candidate_mass <= 0.0) {
+    CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+               "Candidate horizon %d has invalid summed parent mass %g",
+               candidate_hn, double(candidate_mass));
+  }
+
+  candidate.initial_find_flag = true;
+  candidate.really_initial_find_flag = true;
+  candidate.search_flag = false;
+  candidate.found_flag = false;
+  candidate.has_been_found = false;
+  candidate.status = horizon_status__candidate;
+  candidate.inside_confirmed_merger = false;
+  candidate.mass = candidate_mass;
+  candidate.parent_horizons = canonical_parent_group(parent_horizons);
+  candidate.candidate_creation_iteration = cctk_iteration;
+  candidate.candidate_creation_time = cctk_time;
+  candidate.candidate_failed_searches = 0;
+  candidate.candidate_inactive_checks = 0;
+  candidate.h_files_written = false;
+  candidate.BH_diagnostics = BH_diagnostics();
+
+  // Both full and skeletal patch systems store the ghosted h grid function.
+  // Initialize every process so checkpoint data agree before the first solve.
+  setup_initial_guess(ps, candidate.initial_guess_info, state.IO_info,
+                      candidate_hn, N_horizons, state.verbose_info);
+
+  const int n = candidate_hn - 1;
+  ah_centroid_x[n] = 0.0;
+  ah_centroid_y[n] = 0.0;
+  ah_centroid_z[n] = 0.0;
+  ah_centroid_t[n] = 0.0;
+  ah_centroid_valid[n] = 0;
+  ah_centroid_iteration[n] = -1;
+  ah_centroid_x_p[n] = 0.0;
+  ah_centroid_y_p[n] = 0.0;
+  ah_centroid_z_p[n] = 0.0;
+  ah_centroid_t_p[n] = 0.0;
+  ah_centroid_valid_p[n] = 0;
+  ah_centroid_iteration_p[n] = -1;
+  candidate.BH_diagnostics.save(cctkGH, candidate_hn);
+}
+
+//******************************************************************************
+
+void reset_candidate_slot(CCTK_ARGUMENTS, const int candidate_hn)
+{
+  DECLARE_CCTK_ARGUMENTS;
+  DECLARE_CCTK_PARAMETERS;
+
+  if (candidate_hn < 1 || candidate_hn > N_horizons) {
+    CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+               "Candidate horizon number %d is outside the valid range 1:%d",
+               candidate_hn, int(N_horizons));
+  }
+
+  struct AH_data& candidate = *state.AH_data_array[candidate_hn];
+  if (candidate.status != horizon_status__candidate ||
+      candidate.has_been_found) {
+    CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+               "Cannot reset horizon %d: it is not an unconverged candidate",
+               candidate_hn);
+  }
+
+  candidate.initial_find_flag = true;
+  candidate.really_initial_find_flag = true;
+  candidate.search_flag = false;
+  candidate.found_flag = false;
+  candidate.has_been_found = false;
+  candidate.status = horizon_status__unused;
+  candidate.inside_confirmed_merger = false;
+  candidate.mass = 0.0;
+  candidate.parent_horizons.clear();
+  candidate.candidate_creation_iteration = -1;
+  candidate.candidate_creation_time = 0.0;
+  candidate.candidate_failed_searches = 0;
+  candidate.candidate_inactive_checks = 0;
+  candidate.h_files_written = false;
+  candidate.BH_diagnostics = BH_diagnostics();
+
+  candidate.ps_ptr->set_gridfn_to_constant(0.0, gfns::gfn__h);
+
+  const int n = candidate_hn - 1;
+  ah_centroid_x[n] = 0.0;
+  ah_centroid_y[n] = 0.0;
+  ah_centroid_z[n] = 0.0;
+  ah_centroid_t[n] = 0.0;
+  ah_centroid_valid[n] = 0;
+  ah_centroid_iteration[n] = -1;
+  ah_centroid_x_p[n] = 0.0;
+  ah_centroid_y_p[n] = 0.0;
+  ah_centroid_z_p[n] = 0.0;
+  ah_centroid_t_p[n] = 0.0;
+  ah_centroid_valid_p[n] = 0;
+  ah_centroid_iteration_p[n] = -1;
+  candidate.BH_diagnostics.save(cctkGH, candidate_hn);
+}
+
+//******************************************************************************
+
 //
 // This function is called by the Cactus scheduler to set up all our
 // persistent data structures.  (These are stored in  struct state .)
@@ -226,401 +469,400 @@ extern struct state state;
 extern "C"
   void AHFinderDirect_setup(CCTK_ARGUMENTS)
 {
-DECLARE_CCTK_ARGUMENTS_AHFinderDirect_setup
-DECLARE_CCTK_PARAMETERS
+  DECLARE_CCTK_ARGUMENTS_AHFinderDirect_setup
+  DECLARE_CCTK_PARAMETERS
 
-CCTK_VInfo(CCTK_THORNSTRING,
-	   "setting up AHFinderDirect data structures");
+  CCTK_VInfo(CCTK_THORNSTRING,
+  	   "setting up AHFinderDirect data structures");
 
-static bool already_ran = false;
+  static bool already_ran = false;
 
-if (already_ran){
-	return;
-}
+  if (already_ran){
+  	return;
+  }
 
-already_ran = true;
-//
-// check parameters
-//
-int need_zones = 0;
-for (int n=1; n<N_horizons; ++n) {
-  need_zones = jtutil::max(need_zones, int(N_zones_per_right_angle[n]));
-}
-if (need_zones > max_N_zones_per_right_angle) {
-  CCTK_VWarn (FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
-              "AHFinderDirect_setup(): "
-              "The parameter max_N_zones_per_right_angle must be at least the maximum of all N_zones_per_right_angle[] parameters.  "
-              "Set max_N_zones_per_right_angle to %d or higher to continue.",
-              need_zones);      /*NOTREACHED*/
- }
-for (int n=1; n<N_horizons; ++n) {
-  if (depends_on[n] != 0) {
-    assert (depends_on[n] >= 1 && depends_on[n] < n);
-    if (N_zones_per_right_angle[n] != N_zones_per_right_angle[depends_on[n]]) {
-      CCTK_VWarn (FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
-                  "AHFinderDirect_setup(): "
-                  "The parameter N_zones_per_right_angle must be the same for a horizon as for the horizon on which it depends.  "
-                  "Horizon %d depends on horizon %d, but they have different resolutions.",
-                  n, int(depends_on[n])); /*NOTREACHED*/
+  already_ran = true;
+  
+  // Read parameters from BHClusterX
+  if (read_from_BHClusterX) {
+    for (int iAH = 1; iAH < N_horizons; iAH++){
+      if (iAH <= npunctures){
+        initial_guess__coord_sphere__x_center[iAH] = posx[iAH-1];
+        initial_guess__coord_sphere__y_center[iAH] = posy[iAH-1];
+        initial_guess__coord_sphere__z_center[iAH] = posz[iAH-1];
+        origin_x[iAH] = posx[iAH-1];
+        origin_y[iAH] = posy[iAH-1];
+        origin_z[iAH] = posz[iAH-1];
+        initial_guess__coord_sphere__radius[iAH] = 0.5*mass[iAH-1]; // for Bowen-York initial data
+        find_after_individual_time[iAH] = 0.0;
+      } else {
+        disable_horizon[iAH] = "true";
+      }                              
+      initial_guess_method[iAH] = "coordinate sphere";
+      which_surface_to_store_info[iAH] = iAH - 1;
+      patch_system_type[iAH] = "full sphere";
     }
   }
-}
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  //
+  // check parameters
+  //
+  int need_zones = 0;
+  for (int n=1; n<=N_horizons; ++n) {
+    need_zones = jtutil::max(need_zones, int(N_zones_per_right_angle[n]));
+  }
+  if (need_zones > max_N_zones_per_right_angle) {
+    CCTK_VWarn (FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+                "AHFinderDirect_setup(): "
+                "The parameter max_N_zones_per_right_angle must be at least the maximum of all N_zones_per_right_angle[] parameters.  "
+                "Set max_N_zones_per_right_angle to %d or higher to continue.",
+                need_zones);      /*NOTREACHED*/
+  }
+  for (int n=1; n<=N_horizons; ++n) {
+    if (depends_on[n] != 0) {
+      assert (depends_on[n] >= 1 && depends_on[n] < n);
+      if (N_zones_per_right_angle[n] != N_zones_per_right_angle[depends_on[n]]) {
+        CCTK_VWarn (FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+                    "AHFinderDirect_setup(): "
+                    "The parameter N_zones_per_right_angle must be the same for a horizon as for the horizon on which it depends.  "
+                    "Horizon %d depends on horizon %d, but they have different resolutions.",
+                    n, int(depends_on[n])); /*NOTREACHED*/
+      }
+    }
+  }
 
-bool find_individual_is_set = false;
-for (int n = 1 ; n < N_horizons ; ++n)
-{
-if (find_every_individual[n] > 0)
-   then find_individual_is_set = true;
-}
-if (move_origins && find_individual_is_set)
-   then {
-	CCTK_VWarn (CCTK_WARN_ALERT, __LINE__, __FILE__, CCTK_THORNSTRING,
-"Find_every_individual is currently not compatible with moving origins via the move_origins parameter.  "
-"Make sure simultaneous moving horizons are not being calculated at different frequencies." );
-	}
+  bool find_individual_is_set = false;
+  for (int n = 1 ; n < N_horizons ; ++n)
+  {
+    if (find_every_individual[n] > 0)
+       then find_individual_is_set = true;
+    }
+  if (move_origins && find_individual_is_set) then {
+  	CCTK_VWarn (CCTK_WARN_ALERT, __LINE__, __FILE__, CCTK_THORNSTRING,
+      "Find_every_individual is currently not compatible with moving origins via the move_origins parameter.  "
+       "Make sure simultaneous moving horizons are not being calculated at different frequencies." );
+  }
 
-//
-// basic setup
-//
-state.method = decode_method(method);
+  //
+  // basic setup
+  //
+  state.method = decode_method(method);
 
-state.error_info.warn_level__point_outside__initial
-   = warn_level__point_outside__initial;
-state.error_info.warn_level__point_outside__subsequent
-   = warn_level__point_outside__subsequent;
-state.error_info.warn_level__skipping_finite_check
-   = warn_level__skipping_finite_check;
-state.error_info.warn_level__nonfinite_geometry
-   = warn_level__nonfinite_geometry;
-state.error_info.warn_level__gij_not_positive_definite__initial
-   = warn_level__gij_not_positive_definite__initial;
-state.error_info.warn_level__gij_not_positive_definite__subsequent
-   = warn_level__gij_not_positive_definite__subsequent;
+  state.error_info.warn_level__point_outside__initial = warn_level__point_outside__initial;
+  state.error_info.warn_level__point_outside__subsequent = warn_level__point_outside__subsequent;
+  state.error_info.warn_level__skipping_finite_check = warn_level__skipping_finite_check;
+  state.error_info.warn_level__nonfinite_geometry = warn_level__nonfinite_geometry;
+  state.error_info.warn_level__gij_not_positive_definite__initial = warn_level__gij_not_positive_definite__initial;
+  state.error_info.warn_level__gij_not_positive_definite__subsequent = warn_level__gij_not_positive_definite__subsequent;
 
-struct verbose_info& verbose_info = state.verbose_info;
-verbose_info.verbose_level = decode_verbose_level(verbose_level);
-verbose_info.print_physics_highlights
-   = (state.verbose_info.verbose_level >= verbose_level__physics_highlights);
-verbose_info.print_physics_details
-   = (state.verbose_info.verbose_level >= verbose_level__physics_details);
-verbose_info.print_algorithm_highlights
-   = (state.verbose_info.verbose_level >= verbose_level__algorithm_highlights);
-verbose_info.print_algorithm_details
-   = (state.verbose_info.verbose_level >= verbose_level__algorithm_details);
-verbose_info.print_algorithm_debug
-   = (state.verbose_info.verbose_level >= verbose_level__algorithm_debug);
+  struct verbose_info& verbose_info = state.verbose_info;
+  verbose_info.verbose_level = decode_verbose_level(verbose_level);
+  verbose_info.print_physics_highlights = (state.verbose_info.verbose_level >= verbose_level__physics_highlights);
+  verbose_info.print_physics_details = (state.verbose_info.verbose_level >= verbose_level__physics_details);
+  verbose_info.print_algorithm_highlights = (state.verbose_info.verbose_level >= verbose_level__algorithm_highlights);
+  verbose_info.print_algorithm_details = (state.verbose_info.verbose_level >= verbose_level__algorithm_details);
+  verbose_info.print_algorithm_debug = (state.verbose_info.verbose_level >= verbose_level__algorithm_debug);
 
-state.timer_handle = (print_timing_stats != 0) ? CCTK_TimerCreate("finding apparent horizons") : -1;
+  state.timer_handle = (print_timing_stats != 0) ? CCTK_TimerCreate("finding apparent horizons") : -1;
 
-state.N_procs = CCTK_nProcs(cctkGH);
-state.my_proc = CCTK_MyProc(cctkGH);
+  state.N_procs = CCTK_nProcs(cctkGH);
+  state.my_proc = CCTK_MyProc(cctkGH);
 
-state.N_horizons = N_horizons;
-state.N_active_procs = 0;	// dummy value, will be set properly later
-CCTK_VInfo(CCTK_THORNSTRING,
-           "           to search for %d horizon%s on %d processor%s",
-	   state.N_horizons, ((state.N_horizons == 1) ? "" : "s"),
-	   state.N_procs, ((state.N_procs == 1) ? "" : "s"));
-
-
-//
-// Cactus grid info
-//
-if (verbose_info.print_algorithm_highlights)
-   then CCTK_VInfo(CCTK_THORNSTRING, "   setting up Cactus grid info");
-struct cactus_grid_info& cgi = state.cgi;
-cgi.GH = cctkGH;
-// cgi.coord_system_handle = CCTK_CoordSystemHandle(coordinate_system_name);
-// if (cgi.coord_system_handle < 0)
-//    then CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
-// "AHFinderDirect_setup(): can't find Cactus coordinate system \"%s\"!",
-// 		   coordinate_system_name);			/*NOTREACHED*/
-cgi.use_Cactus_conformal_metric = false;	// dummy value, may change later
-
-// TODO: provide correct handle
-cgi.coord_system_handle = 0;
-
-cgi.mask_varindex    = Cactus_gridfn_varindex("AHFinderDirect::ahmask");
-cgi.g_dd_11_varindex = Cactus_gridfn_varindex("ADMBaseX::gxx");
-cgi.g_dd_12_varindex = Cactus_gridfn_varindex("ADMBaseX::gxy");
-cgi.g_dd_13_varindex = Cactus_gridfn_varindex("ADMBaseX::gxz");
-cgi.g_dd_22_varindex = Cactus_gridfn_varindex("ADMBaseX::gyy");
-cgi.g_dd_23_varindex = Cactus_gridfn_varindex("ADMBaseX::gyz");
-cgi.g_dd_33_varindex = Cactus_gridfn_varindex("ADMBaseX::gzz");
-cgi.K_dd_11_varindex = Cactus_gridfn_varindex("ADMBaseX::kxx");
-cgi.K_dd_12_varindex = Cactus_gridfn_varindex("ADMBaseX::kxy");
-cgi.K_dd_13_varindex = Cactus_gridfn_varindex("ADMBaseX::kxz");
-cgi.K_dd_22_varindex = Cactus_gridfn_varindex("ADMBaseX::kyy");
-cgi.K_dd_23_varindex = Cactus_gridfn_varindex("ADMBaseX::kyz");
-cgi.K_dd_33_varindex = Cactus_gridfn_varindex("ADMBaseX::kzz");
-// cgi.psi_varindex     = Cactus_gridfn_varindex("StaticConformal::psi");
+  state.N_horizons = N_horizons;
+  state.N_active_procs = 0;	// dummy value, will be set properly later
+  CCTK_VInfo(CCTK_THORNSTRING,
+             "           to search for %d horizon%s on %d processor%s",
+  	   state.N_horizons, ((state.N_horizons == 1) ? "" : "s"),
+  	   state.N_procs, ((state.N_procs == 1) ? "" : "s"));
 
 
-//
-// geometry info
-//
-if (verbose_info.print_algorithm_highlights)
-   then CCTK_VInfo(CCTK_THORNSTRING, "   setting up geometry interpolator");
-struct geometry_info& gi = state.gi;
-gi.hardwire_Schwarzschild_EF_geometry
-	= (hardwire_Schwarzschild_EF_geometry != 0);
+  //
+  // Cactus grid info
+  //
+  if (verbose_info.print_algorithm_highlights)
+     then CCTK_VInfo(CCTK_THORNSTRING, "   setting up Cactus grid info");
+  struct cactus_grid_info& cgi = state.cgi;
+  cgi.GH = cctkGH;
+  // cgi.coord_system_handle = CCTK_CoordSystemHandle(coordinate_system_name);
+  // if (cgi.coord_system_handle < 0)
+  //    then CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+  // "AHFinderDirect_setup(): can't find Cactus coordinate system \"%s\"!",
+  // 		   coordinate_system_name);			/*NOTREACHED*/
+  cgi.use_Cactus_conformal_metric = false;	// dummy value, may change later
 
-gi.operator_handle = CCTK_InterpHandle(geometry_interpolator_name);
-if (gi.operator_handle < 0)
-   then CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
-"AHFinderDirect_setup(): couldn't find interpolator \"%s\"!",
-		   geometry_interpolator_name);		/*NOTREACHED*/
+  // TODO: provide correct handle
+  cgi.coord_system_handle = 0;
 
-gi.param_table_handle = Util_TableCreateFromString(geometry_interpolator_pars);
-if (gi.param_table_handle < 0)
-   then CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
-"AHFinderDirect_setup(): bad geometry-interpolator parameter(s) \"%s\"!",
-		   geometry_interpolator_pars);		/*NOTREACHED*/
+  cgi.mask_varindex    = Cactus_gridfn_varindex("AHFinderDirect::ahmask");
+  cgi.g_dd_11_varindex = Cactus_gridfn_varindex("ADMBaseX::gxx");
+  cgi.g_dd_12_varindex = Cactus_gridfn_varindex("ADMBaseX::gxy");
+  cgi.g_dd_13_varindex = Cactus_gridfn_varindex("ADMBaseX::gxz");
+  cgi.g_dd_22_varindex = Cactus_gridfn_varindex("ADMBaseX::gyy");
+  cgi.g_dd_23_varindex = Cactus_gridfn_varindex("ADMBaseX::gyz");
+  cgi.g_dd_33_varindex = Cactus_gridfn_varindex("ADMBaseX::gzz");
+  cgi.K_dd_11_varindex = Cactus_gridfn_varindex("ADMBaseX::kxx");
+  cgi.K_dd_12_varindex = Cactus_gridfn_varindex("ADMBaseX::kxy");
+  cgi.K_dd_13_varindex = Cactus_gridfn_varindex("ADMBaseX::kxz");
+  cgi.K_dd_22_varindex = Cactus_gridfn_varindex("ADMBaseX::kyy");
+  cgi.K_dd_23_varindex = Cactus_gridfn_varindex("ADMBaseX::kyz");
+  cgi.K_dd_33_varindex = Cactus_gridfn_varindex("ADMBaseX::kzz");
+  // cgi.psi_varindex     = Cactus_gridfn_varindex("StaticConformal::psi");
 
-gi.geometry__Schwarzschild_EF__mass     = geometry__Schwarzschild_EF__mass;
-gi.geometry__Schwarzschild_EF__x_posn   = geometry__Schwarzschild_EF__x_posn;
-gi.geometry__Schwarzschild_EF__y_posn   = geometry__Schwarzschild_EF__y_posn;
-gi.geometry__Schwarzschild_EF__z_posn   = geometry__Schwarzschild_EF__z_posn;
-gi.geometry__Schwarzschild_EF__epsilon  = geometry__Schwarzschild_EF__epsilon;
-gi.geometry__Schwarzschild_EF__Delta_xyz= geometry__Schwarzschild_EF__Delta_xyz;
+  //
+  // geometry info
+  //
+  if (verbose_info.print_algorithm_highlights)
+     then CCTK_VInfo(CCTK_THORNSTRING, "   setting up geometry interpolator");
+  struct geometry_info& gi = state.gi;
+  gi.hardwire_Schwarzschild_EF_geometry
+  	= (hardwire_Schwarzschild_EF_geometry != 0);
 
-gi.check_that_h_is_finite        = (check_that_h_is_finite        != 0);
-gi.check_that_geometry_is_finite = (check_that_geometry_is_finite != 0);
-gi.mask_is_noshrink		 = (mask_is_noshrink != 0);
+  gi.operator_handle = CCTK_InterpHandle(geometry_interpolator_name);
+  if (gi.operator_handle < 0)
+     then CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+  "AHFinderDirect_setup(): couldn't find interpolator \"%s\"!",
+  		   geometry_interpolator_name);		/*NOTREACHED*/
 
-//
-// Jacobian info
-//
-struct Jacobian_info& Jac_info = state.Jac_info;
-Jac_info.Jacobian_compute_method
-	= decode_Jacobian_compute_method(Jacobian_compute_method);
-Jac_info.Jacobian_store_solve_method
-	= decode_Jacobian_store_solve_method(Jacobian_store_solve_method);
-Jac_info.perturbation_amplitude = Jacobian_perturbation_amplitude;
+  gi.param_table_handle = Util_TableCreateFromString(geometry_interpolator_pars);
+  if (gi.param_table_handle < 0)
+     then CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+  "AHFinderDirect_setup(): bad geometry-interpolator parameter(s) \"%s\"!",
+  		   geometry_interpolator_pars);		/*NOTREACHED*/
 
+  gi.geometry__Schwarzschild_EF__mass     = geometry__Schwarzschild_EF__mass;
+  gi.geometry__Schwarzschild_EF__x_posn   = geometry__Schwarzschild_EF__x_posn;
+  gi.geometry__Schwarzschild_EF__y_posn   = geometry__Schwarzschild_EF__y_posn;
+  gi.geometry__Schwarzschild_EF__z_posn   = geometry__Schwarzschild_EF__z_posn;
+  gi.geometry__Schwarzschild_EF__epsilon  = geometry__Schwarzschild_EF__epsilon;
+  gi.geometry__Schwarzschild_EF__Delta_xyz= geometry__Schwarzschild_EF__Delta_xyz;
 
-//
-// solver info
-//
-struct solver_info& solver_info = state.solver_info;
-solver_info.debugging_output_at_each_Newton_iteration
-			= (debugging_output_at_each_Newton_iteration != 0);
-solver_info.linear_solver_pars.ILUCG_pars.error_tolerance
-	= ILUCG__error_tolerance;
-solver_info.linear_solver_pars.ILUCG_pars.limit_CG_iterations
-	= (ILUCG__limit_CG_iterations != 0);
-solver_info.linear_solver_pars.UMFPACK_pars.N_II_iterations
-	= UMFPACK__N_II_iterations;
-solver_info.max_Newton_iterations__initial
-	= max_Newton_iterations__initial;
-solver_info.max_Newton_iterations__subsequent
-	= max_Newton_iterations__subsequent;
-solver_info.max_allowable_Delta_h_over_h = max_allowable_Delta_h_over_h;
-solver_info.Theta_norm_for_convergence   = Theta_norm_for_convergence;
-solver_info.max_allowable_Theta          = max_allowable_Theta;
-solver_info.max_allowable_Theta_growth_iterations
-                                       = max_allowable_Theta_growth_iterations;
-solver_info.max_allowable_Theta_nonshrink_iterations
-                                    = max_allowable_Theta_nonshrink_iterations;
-// ... horizon numbers run from 1 to N_horizons inclusive
-//     so the array size is N_horizons+1
-solver_info.max_allowable_horizon_radius = new fp[state.N_horizons+1];
-	  {
+  gi.check_that_h_is_finite        = (check_that_h_is_finite        != 0);
+  gi.check_that_geometry_is_finite = (check_that_geometry_is_finite != 0);
+  gi.mask_is_noshrink		 = (mask_is_noshrink != 0);
+
+  //
+  // Jacobian info
+  //
+  struct Jacobian_info& Jac_info = state.Jac_info;
+  Jac_info.Jacobian_compute_method
+  	= decode_Jacobian_compute_method(Jacobian_compute_method);
+  Jac_info.Jacobian_store_solve_method
+  	= decode_Jacobian_store_solve_method(Jacobian_store_solve_method);
+  Jac_info.perturbation_amplitude = Jacobian_perturbation_amplitude;
+
+  //
+  // solver info
+  //
+  struct solver_info& solver_info = state.solver_info;
+  solver_info.debugging_output_at_each_Newton_iteration
+  			= (debugging_output_at_each_Newton_iteration != 0);
+  solver_info.linear_solver_pars.ILUCG_pars.error_tolerance
+  	= ILUCG__error_tolerance;
+  solver_info.linear_solver_pars.ILUCG_pars.limit_CG_iterations
+  	= (ILUCG__limit_CG_iterations != 0);
+  solver_info.linear_solver_pars.UMFPACK_pars.N_II_iterations
+  	= UMFPACK__N_II_iterations;
+  solver_info.max_Newton_iterations__initial
+  	= max_Newton_iterations__initial;
+  solver_info.max_Newton_iterations__subsequent
+  	= max_Newton_iterations__subsequent;
+  solver_info.max_allowable_Delta_h_over_h = max_allowable_Delta_h_over_h;
+  solver_info.Theta_norm_for_convergence   = Theta_norm_for_convergence;
+  solver_info.max_allowable_Theta          = max_allowable_Theta;
+  solver_info.max_allowable_Theta_growth_iterations
+                                         = max_allowable_Theta_growth_iterations;
+  solver_info.max_allowable_Theta_nonshrink_iterations
+                                      = max_allowable_Theta_nonshrink_iterations;
+  // ... horizon numbers run from 1 to N_horizons inclusive
+  //     so the array size is N_horizons+1
+  solver_info.max_allowable_horizon_radius = new fp[state.N_horizons+1];
+  {
 	for (int hn = 0 ; hn <= N_horizons ; ++hn)
 	{
 	solver_info.max_allowable_horizon_radius[hn]
 		= max_allowable_horizon_radius[hn];
 	}
-	  }
-solver_info.want_expansion_gradients = want_expansion_gradients;
+  }
+  solver_info.want_expansion_gradients = want_expansion_gradients;
 
+  //
+  // I/O info
+  //
+  struct IO_info& IO_info = state.IO_info;
+  IO_info.output_ASCII_files = (output_ASCII_files != 0);
+  IO_info.output_HDF5_files = (output_HDF5_files != 0);
+  IO_info.output_initial_guess = (output_initial_guess != 0);
+  IO_info.output_h_every     = output_h_every;
+  IO_info.output_Theta_every = output_Theta_every;
+  IO_info.output_mean_curvature_every = output_mean_curvature_every;
+  IO_info.output_h     = false;	// dummy value
+  IO_info.output_Theta = false;	// dummy value
+  IO_info.output_mean_curvature = false;	// dummy value
 
-//
-// I/O info
-//
-struct IO_info& IO_info = state.IO_info;
-IO_info.output_ASCII_files = (output_ASCII_files != 0);
-IO_info.output_HDF5_files = (output_HDF5_files != 0);
-IO_info.output_initial_guess = (output_initial_guess != 0);
-IO_info.output_h_every     = output_h_every;
-IO_info.output_Theta_every = output_Theta_every;
-IO_info.output_mean_curvature_every = output_mean_curvature_every;
-IO_info.output_h     = false;	// dummy value
-IO_info.output_Theta = false;	// dummy value
-IO_info.output_mean_curvature = false;	// dummy value
+  IO_info.output_BH_diagnostics              = (output_BH_diagnostics != 0);
+  IO_info.BH_diagnostics_directory = (strlen(BH_diagnostics_directory) == 0) ? /* IO:: */ out_dir : BH_diagnostics_directory;
+  IO_info.BH_diagnostics_base_file_name      = BH_diagnostics_base_file_name;
+  IO_info.BH_diagnostics_file_name_extension = BH_diagnostics_file_name_extension;
 
-IO_info.output_BH_diagnostics              = (output_BH_diagnostics != 0);
-IO_info.BH_diagnostics_directory
-	= (strlen(BH_diagnostics_directory) == 0)
-	  ? /* IO:: */ out_dir
-	  : BH_diagnostics_directory;
-IO_info.BH_diagnostics_base_file_name      = BH_diagnostics_base_file_name;
-IO_info.BH_diagnostics_file_name_extension = BH_diagnostics_file_name_extension;
+  IO_info.output_ghost_zones_for_h  = (output_ghost_zones_for_h != 0);
+  IO_info.ASCII_gnuplot_file_name_extension = ASCII_gnuplot_file_name_extension;
+  IO_info.HDF5_file_name_extension          = HDF5_file_name_extension;
+  IO_info.h_directory = (strlen(h_directory) == 0) ? /* IO:: */ out_dir : h_directory;
+  IO_info.h_base_file_name         = h_base_file_name;
+  IO_info.Theta_base_file_name     = Theta_base_file_name;
+  IO_info.mean_curvature_base_file_name     = mean_curvature_base_file_name;
+  IO_info.Delta_h_base_file_name   = Delta_h_base_file_name;
+  IO_info.h_min_digits             = h_min_digits;
+  IO_info.Jacobian_base_file_name  = Jacobian_base_file_name;
+  IO_info.output_OpenDX_control_files  = (output_OpenDX_control_files != 0);
+  IO_info.OpenDX_control_file_name_extension = OpenDX_control_file_name_extension;
+  IO_info.time_iteration = 0;
+  IO_info.time           = 0.0;
 
-IO_info.output_ghost_zones_for_h  = (output_ghost_zones_for_h != 0);
-IO_info.ASCII_gnuplot_file_name_extension = ASCII_gnuplot_file_name_extension;
-IO_info.HDF5_file_name_extension          = HDF5_file_name_extension;
-IO_info.h_directory
-	= (strlen(h_directory) == 0)
-	  ? /* IO:: */ out_dir
-	  : h_directory;
-IO_info.h_base_file_name         = h_base_file_name;
-IO_info.Theta_base_file_name     = Theta_base_file_name;
-IO_info.mean_curvature_base_file_name     = mean_curvature_base_file_name;
-IO_info.Delta_h_base_file_name   = Delta_h_base_file_name;
-IO_info.h_min_digits             = h_min_digits;
-IO_info.Jacobian_base_file_name  = Jacobian_base_file_name;
-IO_info.output_OpenDX_control_files  = (output_OpenDX_control_files != 0);
-IO_info.OpenDX_control_file_name_extension = OpenDX_control_file_name_extension;
-IO_info.time_iteration = 0;
-IO_info.time           = 0.0;
+  //
+  // other misc setup
+  //
+  state.BH_diagnostics_info.integral_method = patch::decode_integration_method(integral_method);
 
-
-//
-// other misc setup
-//
-state.BH_diagnostics_info.integral_method
-   = patch::decode_integration_method(integral_method);
-
-
-//
-// mask parameters
-//
-struct mask_info& mask_info = state.mask_info;
-mask_info.set_mask_for_any_horizon = false;
-// ... horizon numbers run from 1 to N_horizons inclusive
-//     so the array size is N_horizons+1
-mask_info.set_mask_for_this_horizon = new bool[N_horizons+1];
-	  {
-	for (int hn = 1 ; hn <= N_horizons ; ++hn)
+  //
+  // mask parameters
+  //
+  struct mask_info& mask_info = state.mask_info;
+  mask_info.set_mask_for_any_horizon = false;
+  // ... horizon numbers run from 1 to N_horizons inclusive
+  //     so the array size is N_horizons+1
+  mask_info.set_mask_for_this_horizon = new bool[N_horizons+1];
 	{
-	mask_info.set_mask_for_this_horizon[hn]
-		= (set_mask_for_all_horizons != 0)
-		  || (set_mask_for_individual_horizon[hn] != 0);
-	mask_info.set_mask_for_any_horizon
-		|= mask_info.set_mask_for_this_horizon[hn];
+  	for (int hn = 1 ; hn <= N_horizons ; ++hn) {
+    	mask_info.set_mask_for_this_horizon[hn]
+    		= (set_mask_for_all_horizons != 0)
+    		  || (set_mask_for_individual_horizon[hn] != 0);
+    	mask_info.set_mask_for_any_horizon
+    		|= mask_info.set_mask_for_this_horizon[hn];
+  	}
 	}
-	  }
-if (mask_info.set_mask_for_any_horizon)
-   then {
-	mask_info.radius_multiplier  = mask_radius_multiplier;
-	mask_info.radius_offset      = mask_radius_offset;
-	mask_info.buffer_thickness   = mask_buffer_thickness;
-	mask_info.mask_is_noshrink   = mask_is_noshrink;
-	mask_info.min_horizon_radius_points_for_mask
-				     = min_horizon_radius_points_for_mask;
-	mask_info.set_old_style_mask = (set_old_style_mask != 0);
-	mask_info.set_new_style_mask = (set_new_style_mask != 0);
-	if (mask_info.set_old_style_mask)
-	   then {
-		struct mask_info::old_style_mask_info& osmi
-			= mask_info.old_style_mask_info;
-		osmi.gridfn_name     = old_style_mask_gridfn_name;
-		osmi.gridfn_varindex = Cactus_gridfn_varindex(osmi.gridfn_name);
-		osmi.gridfn_dataptr  = NULL;	// dummy value; fixup later
-		osmi.inside_value  = old_style_mask_inside_value;
-		osmi.buffer_value  = old_style_mask_buffer_value;
-		osmi.outside_value = old_style_mask_outside_value;
-		}
-	if (mask_info.set_new_style_mask)
-	   then {
-		struct mask_info::new_style_mask_info& nsmi
-			= mask_info.new_style_mask_info;
-		nsmi.gridfn_name     = new_style_mask_gridfn_name;
-		nsmi.gridfn_varindex = Cactus_gridfn_varindex(nsmi.gridfn_name);
-		nsmi.gridfn_dataptr  = NULL;	// dummy value; fixup later
-		nsmi.bitfield_name   = new_style_mask_bitfield_name;
-		nsmi.bitfield_bitmask = 0;	// dummy value; fixup later
-		nsmi.inside_value    = new_style_mask_inside_value;
-		nsmi.buffer_value    = new_style_mask_buffer_value;
-		nsmi.outside_value   = new_style_mask_outside_value;
-		nsmi.inside_bitvalue = 0;	// dummy value; fixup later
-		nsmi.buffer_bitvalue = 0;	// dummy value; fixup later
-		nsmi.outside_bitvalue = 0;	// dummy value; fixup later
-		}
+  if (mask_info.set_mask_for_any_horizon) then {
+  	mask_info.radius_multiplier  = mask_radius_multiplier;
+  	mask_info.radius_offset      = mask_radius_offset;
+  	mask_info.buffer_thickness   = mask_buffer_thickness;
+  	mask_info.mask_is_noshrink   = mask_is_noshrink;
+  	mask_info.min_horizon_radius_points_for_mask
+  				     = min_horizon_radius_points_for_mask;
+  	mask_info.set_old_style_mask = (set_old_style_mask != 0);
+  	mask_info.set_new_style_mask = (set_new_style_mask != 0);
+  	if (mask_info.set_old_style_mask) then {
+  		struct mask_info::old_style_mask_info& osmi
+  			= mask_info.old_style_mask_info;
+  		osmi.gridfn_name     = old_style_mask_gridfn_name;
+  		osmi.gridfn_varindex = Cactus_gridfn_varindex(osmi.gridfn_name);
+  		osmi.gridfn_dataptr  = NULL;	// dummy value; fixup later
+  		osmi.inside_value  = old_style_mask_inside_value;
+  		osmi.buffer_value  = old_style_mask_buffer_value;
+  		osmi.outside_value = old_style_mask_outside_value;
+    }
+  	if (mask_info.set_new_style_mask)
+  	   then {
+  		struct mask_info::new_style_mask_info& nsmi
+  			= mask_info.new_style_mask_info;
+  		nsmi.gridfn_name     = new_style_mask_gridfn_name;
+  		nsmi.gridfn_varindex = Cactus_gridfn_varindex(nsmi.gridfn_name);
+  		nsmi.gridfn_dataptr  = NULL;	// dummy value; fixup later
+  		nsmi.bitfield_name   = new_style_mask_bitfield_name;
+  		nsmi.bitfield_bitmask = 0;	// dummy value; fixup later
+  		nsmi.inside_value    = new_style_mask_inside_value;
+  		nsmi.buffer_value    = new_style_mask_buffer_value;
+  		nsmi.outside_value   = new_style_mask_outside_value;
+  		nsmi.inside_bitvalue = 0;	// dummy value; fixup later
+  		nsmi.buffer_bitvalue = 0;	// dummy value; fixup later
+  		nsmi.outside_bitvalue = 0;	// dummy value; fixup later
+    }
 	}
 
+  //
+  // (genuine) horizon sequence for this processor
+  //
+  state.my_hs = new horizon_sequence(state.N_horizons);
+  horizon_sequence& hs = *state.my_hs;
 
-//
-// (genuine) horizon sequence for this processor
-//
-state.my_hs = new horizon_sequence(state.N_horizons);
-horizon_sequence& hs = *state.my_hs;
+  //
+  // if we're going to actually find horizons
+  //    we spread the horizons over multiple processors for maximum efficiency,
+  // otherwise (we're just doing testing/debugging computations, so)
+  //    we allocate all the horizons to processor #0 for simplicity
+  //
+  const bool multiproc_flag = (state.method == method__find_horizons);
+  state.N_active_procs
+     = allocate_horizons_to_processor(state.N_procs, state.my_proc,
+  				    state.N_horizons, multiproc_flag,
+                                      depends_on,
+  				    hs,
+  				    verbose_info);
 
-//
-// if we're going to actually find horizons
-//    we spread the horizons over multiple processors for maximum efficiency,
-// otherwise (we're just doing testing/debugging computations, so)
-//    we allocate all the horizons to processor #0 for simplicity
-//
-const bool multiproc_flag = (state.method == method__find_horizons);
-state.N_active_procs
-   = allocate_horizons_to_processor(state.N_procs, state.my_proc,
-				    state.N_horizons, multiproc_flag,
-                                    depends_on,
-				    hs,
-				    verbose_info);
+  // ... horizon numbers run from 1 to N_horizons inclusive
+  //     so the array size is N_horizons+1
+  state.AH_data_array = new AH_data*[N_horizons+1];
+  {
+  	for (int hn = 0 ; hn <= N_horizons ; ++hn) {
+  	  state.AH_data_array[hn] = NULL;
+  	}
+	}
 
-// ... horizon numbers run from 1 to N_horizons inclusive
-//     so the array size is N_horizons+1
-state.AH_data_array = new AH_data*[N_horizons+1];
+  //
+  // horizon-specific info for each horizon
+  //
+
+  // set up the interpatch interpolator
+  if (verbose_info.print_algorithm_highlights)
+     then CCTK_VInfo(CCTK_THORNSTRING, "   setting up interpatch interpolator");
+  const int ip_interp_handle = CCTK_InterpHandle(interpatch_interpolator_name);
+  if (ip_interp_handle < 0)
+     then CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+  "AHFinderDirect_setup(): couldn't find interpatch interpolator \"%s\"!",
+  		   interpatch_interpolator_name);		/*NOTREACHED*/
+  const int ip_interp_param_table_handle
+  	= Util_TableCreateFromString(interpatch_interpolator_pars);
+  if (ip_interp_param_table_handle < 0)
+     then CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+  "AHFinderDirect_setup(): bad interpatch-interpolator parameter(s) \"%s\"!",
+  		   interpatch_interpolator_pars);		/*NOTREACHED*/
+
+  // set up the surface interpolator if it's going to be used
+  int surface_interp_handle = -1;
+  int surface_interp_param_table_handle = -1;
+  if (strlen(surface_interpolator_name) > 0) then {
+  	if (verbose_info.print_algorithm_highlights)
+  	   then CCTK_VInfo(CCTK_THORNSTRING,
+  			   "   setting up surface interpolator");
+  	surface_interp_handle = CCTK_InterpHandle(surface_interpolator_name);
+  	if (surface_interp_handle < 0)
+  	   then CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+  "AHFinderDirect_setup(): couldn't find surface interpolator \"%s\"!",
+  			   surface_interpolator_name);		/*NOTREACHED*/
+  	surface_interp_param_table_handle
+  		= Util_TableCreateFromString(surface_interpolator_pars);
+  	if (surface_interp_param_table_handle < 0)
+  	   then CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+  "AHFinderDirect_setup(): bad surface-interpolator parameter(s) \"%s\"!",
+  			   surface_interpolator_pars);		/*NOTREACHED*/
+  }
+
+  // setup all horizons on this processor,
+  // with full-fledged patch systems for genuine horizons
+  // and skeletal patch systems for others
 	  {
-	for (int hn = 0 ; hn <= N_horizons ; ++hn)
-	{
-	state.AH_data_array[hn] = NULL;
-	}
-	  }
-
-
-//
-// horizon-specific info for each horizon
-//
-
-// set up the interpatch interpolator
-if (verbose_info.print_algorithm_highlights)
-   then CCTK_VInfo(CCTK_THORNSTRING, "   setting up interpatch interpolator");
-const int ip_interp_handle = CCTK_InterpHandle(interpatch_interpolator_name);
-if (ip_interp_handle < 0)
-   then CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
-"AHFinderDirect_setup(): couldn't find interpatch interpolator \"%s\"!",
-		   interpatch_interpolator_name);		/*NOTREACHED*/
-const int ip_interp_param_table_handle
-	= Util_TableCreateFromString(interpatch_interpolator_pars);
-if (ip_interp_param_table_handle < 0)
-   then CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
-"AHFinderDirect_setup(): bad interpatch-interpolator parameter(s) \"%s\"!",
-		   interpatch_interpolator_pars);		/*NOTREACHED*/
-
-// set up the surface interpolator if it's going to be used
-int surface_interp_handle = -1;
-int surface_interp_param_table_handle = -1;
-if (strlen(surface_interpolator_name) > 0)
-   then {
-	if (verbose_info.print_algorithm_highlights)
-	   then CCTK_VInfo(CCTK_THORNSTRING,
-			   "   setting up surface interpolator");
-	surface_interp_handle = CCTK_InterpHandle(surface_interpolator_name);
-	if (surface_interp_handle < 0)
-	   then CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
-"AHFinderDirect_setup(): couldn't find surface interpolator \"%s\"!",
-			   surface_interpolator_name);		/*NOTREACHED*/
-	surface_interp_param_table_handle
-		= Util_TableCreateFromString(surface_interpolator_pars);
-	if (surface_interp_param_table_handle < 0)
-	   then CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
-"AHFinderDirect_setup(): bad surface-interpolator parameter(s) \"%s\"!",
-			   surface_interpolator_pars);		/*NOTREACHED*/
-	}
-
-// setup all horizons on this processor,
-// with full-fledged patch systems for genuine horizons
-// and skeletal patch systems for others
-	  {
-	for (int hn = 1 ; hn <= hs.N_horizons() ; ++hn)
-	{
-	const bool genuine_flag = hs.is_hn_genuine(hn);
-	state.AH_data_array[hn] = new AH_data;
-	struct AH_data& AH_data = *state.AH_data_array[hn];
+	for (int hn = 1 ; hn <= hs.N_horizons() ; ++hn) {
+  	const bool genuine_flag = hs.is_hn_genuine(hn);
+  	state.AH_data_array[hn] = new AH_data;
+  	struct AH_data& AH_data = *state.AH_data_array[hn];
 
 	if (verbose_info.print_algorithm_highlights)
 	   then CCTK_VInfo(CCTK_THORNSTRING,
@@ -728,25 +970,37 @@ if (strlen(surface_interpolator_name) > 0)
         AH_data.shiftout_factor = shiftout_factor[hn];
         AH_data.smoothing_factor = smoothing_factor[hn];
 
-	// AH_data.initial_find_flag = genuine_flag;
-	// AH_data.really_initial_find_flag = AH_data.initial_find_flag;
-	AH_data.initial_find_flag = true;
-	AH_data.really_initial_find_flag = AH_data.initial_find_flag;
+  	// AH_data.initial_find_flag = genuine_flag;
+  	// AH_data.really_initial_find_flag = AH_data.initial_find_flag;
+  	AH_data.initial_find_flag = true;
+  	AH_data.really_initial_find_flag = AH_data.initial_find_flag;
 
-	if (genuine_flag)
-	   then {
-		if (verbose_info.print_algorithm_details)
-		   then CCTK_VInfo(CCTK_THORNSTRING,
-			   "      setting initial guess parameters etc");
-		set_initial_guess_parameters(AH_data, hn, /* irrelevant here; leave at zero */0, 0, 0);
-		}
+  	if (genuine_flag) then {
+  		if (verbose_info.print_algorithm_details)
+  		   then CCTK_VInfo(CCTK_THORNSTRING,
+  			   "      setting initial guess parameters etc");
+  		set_initial_guess_parameters(AH_data, hn, /* irrelevant here; leave at zero */0, 0, 0);
+    }
 
-	AH_data.search_flag = false;
-	AH_data.found_flag = false;
-	AH_data.h_files_written = false;
-	AH_data.BH_diagnostics_fileptr = NULL;
+  	AH_data.search_flag = false;
+  	AH_data.found_flag = false;
+  	AH_data.has_been_found = false;
+  	AH_data.status =
+  	    read_from_BHClusterX && hn > npunctures
+  	        ? horizon_status__unused
+  	        : horizon_status__individual;
+  	AH_data.inside_confirmed_merger = false;
+  	AH_data.mass =
+  	    read_from_BHClusterX && hn <= npunctures ? mass[hn-1] : 0.0;
+  	AH_data.parent_horizons.clear();
+  	AH_data.candidate_creation_iteration = -1;
+  	AH_data.candidate_creation_time = 0.0;
+  	AH_data.candidate_failed_searches = 0;
+  	AH_data.candidate_inactive_checks = 0;
+  	AH_data.h_files_written = false;
+  	AH_data.BH_diagnostics_fileptr = NULL;
 	}
-	  }
+	}
 
   // Initialise the centroids.  These values may later be overwritten
   // when they are recovered from a checkpoint.  However, if new
@@ -773,6 +1027,9 @@ if (strlen(surface_interpolator_name) > 0)
     ah_really_initial_find_flag[n] = AH_data.really_initial_find_flag;
     ah_search_flag[n]              = AH_data.search_flag;
     ah_found_flag[n]               = AH_data.found_flag;
+    ah_status[n]                   = AH_data.status;
+    ah_has_been_found[n]           = AH_data.has_been_found;
+    ah_inside_confirmed_merger[n]  = AH_data.inside_confirmed_merger;
     if (verbose_info.print_algorithm_details) {
       printf ("AHF setup %d initial_find_flag=%d\n",        n+1, (int) AH_data.initial_find_flag);
       printf ("AHF setup %d really_initial_find_flag=%d\n", n+1, (int) AH_data.really_initial_find_flag);

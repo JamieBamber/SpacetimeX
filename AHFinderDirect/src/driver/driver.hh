@@ -8,6 +8,8 @@
 //	"BH_diagnostics.hh"
 //
 
+#include <vector>
+
 // everything in this file is inside this namespace
 namespace AHFinderDirect
 	  {
@@ -26,6 +28,18 @@ enum	method
 	method__evaluate_expansions,
 	method__test_expansion_Jacobians,
 	method__find_horizons // no comma
+	};
+
+//
+// Lifecycle of a preallocated apparent-horizon slot.  Keep these numerical
+// values stable: they are stored in Cactus variables for checkpoint/recovery.
+//
+enum	horizon_status
+	{
+	horizon_status__unused = 0,
+	horizon_status__individual = 1,
+	horizon_status__candidate = 2,
+	horizon_status__confirmed = 3
 	};
 
 //
@@ -325,8 +339,17 @@ struct	AH_data
 
 	bool search_flag;	// did we search for this horizon
 	bool found_flag;	// did we find this horizon (successfully)
+	bool has_been_found;	// has this horizon converged at least once?
+	enum horizon_status status;
+	bool inside_confirmed_merger;
+	fp mass;		// proxy mass used for merger initial guesses
+	std::vector<int> parent_horizons;
+	int candidate_creation_iteration;
+	fp candidate_creation_time;
+	int candidate_failed_searches;
+	int candidate_inactive_checks;
 	bool h_files_written;	// have we written horizon-shape or similar
-				// files for this horizon yet?
+					// files for this horizon yet?
 
 	struct BH_diagnostics BH_diagnostics;
 	FILE *BH_diagnostics_fileptr;
@@ -388,6 +411,22 @@ struct	state
 
 // setup.cc
 // ... called from Cactus Scheduler
+std::vector<int>
+canonical_parent_group(const std::vector<int>& parent_horizons);
+bool same_parent_group(const std::vector<int>& parents_a,
+		       const std::vector<int>& parents_b);
+int find_horizon_with_parent_group(
+	const std::vector<int>& parent_horizons);
+int find_unused_horizon_slot();
+void initialize_candidate_slot(
+	CCTK_ARGUMENTS,
+	int candidate_hn,
+	const std::vector<int>& parent_horizons,
+	fp candidate_origin_x,
+	fp candidate_origin_y,
+	fp candidate_origin_z,
+	fp candidate_radius);
+void reset_candidate_slot(CCTK_ARGUMENTS, int candidate_hn);
 extern "C"
   void AHFinderDirect_setup(CCTK_ARGUMENTS);
 

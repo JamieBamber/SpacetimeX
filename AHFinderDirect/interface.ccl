@@ -131,6 +131,32 @@ CCTK_REAL ah_flags[N_horizons] TYPE=scalar
   ah_centroid_iteration_p
 }
 
+# Per-slot lifecycle metadata.  These variables are CCTK_INT rather than
+# CCTK_REAL so that their checkpointed representation matches their semantics.
+CCTK_INT ah_lifecycle[N_horizons] TYPE=scalar
+{
+  ah_status
+  ah_has_been_found
+  ah_inside_confirmed_merger
+  ah_candidate_creation_iteration
+  ah_candidate_failed_searches
+  ah_candidate_inactive_checks
+  ah_candidate_parent_count
+}
+
+CCTK_REAL ah_candidate_times[N_horizons] TYPE=scalar
+{
+  ah_candidate_creation_time
+}
+
+CCTK_REAL ah_masses[N_horizons] TYPE=scalar
+{
+  ah_mass
+}
+
+# Flattened as parent + N_horizons * candidate.
+CCTK_INT ah_candidate_parent[N_horizons] TYPE=array DIM=1 SIZE=N_horizons DISTRIB=constant
+
 ################################################################################
 
 # This IOUtil function is used to determine whether the diagnostics file

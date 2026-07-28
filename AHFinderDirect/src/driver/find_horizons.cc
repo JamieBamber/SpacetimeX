@@ -15,7 +15,9 @@
 #include <math.h>
 #include <string.h>
 #include <loop_device.hxx>
+#include <algorithm>
 #include <array>
+#include <vector>
 
 #include "util_Table.h"
 #include "cctk.h"
@@ -84,7 +86,337 @@ void do_test_expansion_Jacobians(int my_proc, int N_horizons,
 				 const struct error_info& error_info,
 				 const struct verbose_info& verbose_info,
 				 int timer_handle);
+void promote_candidate_slot(int candidate_hn);
+void discover_method1_mergers(CCTK_ARGUMENTS);
+void release_method1_candidates(CCTK_ARGUMENTS);
 	  }
+
+//******************************************************************************
+
+namespace {
+void promote_candidate_slot(const int candidate_hn)
+{
+  struct AH_data& candidate = *state.AH_data_array[candidate_hn];
+
+  if (candidate.status != horizon_status__candidate ||
+      !candidate.found_flag || candidate.has_been_found) {
+    CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+               "Cannot promote horizon %d: status=%d, found=%d, "
+               "has_been_found=%d",
+               candidate_hn, int(candidate.status),
+               int(candidate.found_flag), int(candidate.has_been_found));
+  }
+  if (candidate.parent_horizons.size() < 2) {
+    CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+               "Cannot promote candidate horizon %d with fewer than two parents",
+               candidate_hn);
+  }
+
+  // Validate the complete relationship before changing any slot, so a bad
+  // candidate cannot leave a partially updated merger tree.
+  for (std::vector<int>::const_iterator parent_hn =
+           candidate.parent_horizons.begin();
+       parent_hn != candidate.parent_horizons.end(); ++parent_hn) {
+    if (*parent_hn < 1 || *parent_hn > state.N_horizons ||
+        *parent_hn == candidate_hn) {
+      CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+                 "Candidate horizon %d has invalid parent horizon %d",
+                 candidate_hn, *parent_hn);
+    }
+    const struct AH_data& parent = *state.AH_data_array[*parent_hn];
+    if (!parent.has_been_found ||
+        (parent.status != horizon_status__individual &&
+         parent.status != horizon_status__confirmed) ||
+        parent.inside_confirmed_merger) {
+      CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+                 "Candidate horizon %d has ineligible parent horizon %d "
+                 "(status=%d, has_been_found=%d, inside_merger=%d)",
+                 candidate_hn, *parent_hn, int(parent.status),
+                 int(parent.has_been_found),
+                 int(parent.inside_confirmed_merger));
+    }
+  }
+
+  for (std::vector<int>::const_iterator parent_hn =
+           candidate.parent_horizons.begin();
+       parent_hn != candidate.parent_horizons.end(); ++parent_hn) {
+    state.AH_data_array[*parent_hn]->inside_confirmed_merger = true;
+  }
+
+  candidate.status = horizon_status__confirmed;
+  candidate.has_been_found = true;
+  candidate.inside_confirmed_merger = false;
+  candidate.initial_find_flag = false;
+  candidate.really_initial_find_flag = false;
+  candidate.candidate_inactive_checks = 0;
+
+  if (state.my_proc == 0) {
+    CCTK_VInfo(CCTK_THORNSTRING,
+               "Promoted candidate horizon %d to a confirmed horizon",
+               candidate_hn);
+  }
+}
+}
+
+//******************************************************************************
+
+namespace {
+void discover_method1_mergers(CCTK_ARGUMENTS)
+{
+  DECLARE_CCTK_ARGUMENTS;
+  DECLARE_CCTK_PARAMETERS;
+
+  if (!discover_mergers) {
+    return;
+  }
+
+  // The eligible horizons are the current outer frontier of the merger tree:
+  // real horizons which have not already been enclosed by a confirmed child.
+  std::vector<int> eligible;
+  for (int hn = 1; hn <= N_horizons; ++hn) {
+    const struct AH_data& AH_data = *state.AH_data_array[hn];
+    if (AH_data.has_been_found &&
+        !AH_data.inside_confirmed_merger &&
+        (AH_data.status == horizon_status__individual ||
+         AH_data.status == horizon_status__confirmed)) {
+      eligible.push_back(hn);
+    }
+  }
+  if (eligible.size() < 2) {
+    return;
+  }
+
+  const int neligible = int(eligible.size());
+  std::vector<std::vector<bool> > adjacent(
+      neligible, std::vector<bool>(neligible, false));
+  for (int i = 0; i < neligible; ++i) {
+    const struct AH_data& AH_i = *state.AH_data_array[eligible[i]];
+    for (int j = i + 1; j < neligible; ++j) {
+      const struct AH_data& AH_j = *state.AH_data_array[eligible[j]];
+      const fp dx = AH_i.BH_diagnostics.centroid_x -
+                    AH_j.BH_diagnostics.centroid_x;
+      const fp dy = AH_i.BH_diagnostics.centroid_y -
+                    AH_j.BH_diagnostics.centroid_y;
+      const fp dz = AH_i.BH_diagnostics.centroid_z -
+                    AH_j.BH_diagnostics.centroid_z;
+      const fp distance = sqrt(dx*dx + dy*dy + dz*dz);
+      const fp min_distance =
+          4.0 * merger_search_factor * (AH_i.mass + AH_j.mass);
+      adjacent[i][j] = adjacent[j][i] = distance < min_distance;
+    }
+  }
+
+  std::vector<std::vector<int> > proposed_groups;
+  if (merger_allow_group_mergers) {
+    // Method #1 as used in GRChombo: each connected component of the
+    // pair-proximity graph is one proposed merger group.
+    std::vector<bool> visited(neligible, false);
+    for (int seed = 0; seed < neligible; ++seed) {
+      if (visited[seed]) {
+        continue;
+      }
+      std::vector<int> component_indices(1, seed);
+      visited[seed] = true;
+      for (std::vector<int>::size_type next = 0;
+           next < component_indices.size(); ++next) {
+        const int i = component_indices[next];
+        for (int j = 0; j < neligible; ++j) {
+          if (adjacent[i][j] && !visited[j]) {
+            visited[j] = true;
+            component_indices.push_back(j);
+          }
+        }
+      }
+      if (component_indices.size() >= 2) {
+        std::vector<int> group;
+        for (std::vector<int>::const_iterator index =
+                 component_indices.begin();
+             index != component_indices.end(); ++index) {
+          group.push_back(eligible[*index]);
+        }
+        proposed_groups.push_back(canonical_parent_group(group));
+      }
+    }
+  } else {
+    // Pair-only mode keeps every qualifying edge as its own candidate.
+    for (int i = 0; i < neligible; ++i) {
+      for (int j = i + 1; j < neligible; ++j) {
+        if (adjacent[i][j]) {
+          std::vector<int> pair;
+          pair.push_back(eligible[i]);
+          pair.push_back(eligible[j]);
+          proposed_groups.push_back(canonical_parent_group(pair));
+        }
+      }
+    }
+  }
+
+  int active_candidates = 0;
+  for (int hn = 1; hn <= N_horizons; ++hn) {
+    if (state.AH_data_array[hn]->status == horizon_status__candidate) {
+      ++active_candidates;
+    }
+  }
+
+  for (std::vector<std::vector<int> >::const_iterator group =
+           proposed_groups.begin();
+       group != proposed_groups.end(); ++group) {
+    if (find_horizon_with_parent_group(*group) != 0) {
+      continue;
+    }
+    if (active_candidates >= max_active_merger_candidates) {
+      if (state.my_proc == 0) {
+        CCTK_VWarn(CCTK_WARN_ALERT, __LINE__, __FILE__, CCTK_THORNSTRING,
+                   "Not creating another Method #1 merger candidate: "
+                   "max_active_merger_candidates=%d",
+                   int(max_active_merger_candidates));
+      }
+      break;
+    }
+
+    const int candidate_hn = find_unused_horizon_slot();
+    if (candidate_hn == 0) {
+      if (state.my_proc == 0) {
+        CCTK_VWarn(CCTK_WARN_ALERT, __LINE__, __FILE__, CCTK_THORNSTRING,
+                   "No unused AHFinderDirect slot remains for a new "
+                   "Method #1 merger candidate");
+      }
+      break;
+    }
+
+    fp total_mass = 0.0;
+    fp center_x = 0.0;
+    fp center_y = 0.0;
+    fp center_z = 0.0;
+    for (std::vector<int>::const_iterator parent_hn = group->begin();
+         parent_hn != group->end(); ++parent_hn) {
+      const struct AH_data& parent = *state.AH_data_array[*parent_hn];
+      total_mass += parent.mass;
+      center_x += parent.mass * parent.BH_diagnostics.centroid_x;
+      center_y += parent.mass * parent.BH_diagnostics.centroid_y;
+      center_z += parent.mass * parent.BH_diagnostics.centroid_z;
+    }
+    if (!isfinite(total_mass) || total_mass <= 0.0) {
+      CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+                 "Method #1 proposed a merger group with invalid total "
+                 "proxy mass %g",
+                 double(total_mass));
+    }
+    center_x /= total_mass;
+    center_y /= total_mass;
+    center_z /= total_mass;
+    const fp candidate_radius = merger_pre_factor * total_mass;
+
+    initialize_candidate_slot(
+        CCTK_PASS_CTOC, candidate_hn, *group,
+        center_x, center_y, center_z, candidate_radius);
+    // Discovery is performed only on a horizon-finder iteration.  Make the
+    // newly initialized candidate participate in the Newton solve later in
+    // this same call, independently of the timing parameters attached to its
+    // previously unused slot.
+    state.AH_data_array[candidate_hn]->search_flag = true;
+    ++active_candidates;
+
+    if (state.my_proc == 0) {
+      CCTK_VInfo(CCTK_THORNSTRING,
+                 "Created Method #1 merger candidate horizon %d with "
+                 "%d parents, proxy mass %g, and initial radius %g",
+                 candidate_hn, int(group->size()), double(total_mass),
+                 double(candidate_radius));
+    }
+  }
+}
+}
+
+//******************************************************************************
+
+namespace {
+void release_method1_candidates(CCTK_ARGUMENTS)
+{
+  DECLARE_CCTK_ARGUMENTS;
+  DECLARE_CCTK_PARAMETERS;
+
+  std::vector<int> candidates_to_reset;
+  for (int candidate_hn = 1; candidate_hn <= N_horizons; ++candidate_hn) {
+    struct AH_data& candidate = *state.AH_data_array[candidate_hn];
+    if (candidate.status != horizon_status__candidate) {
+      continue;
+    }
+
+    bool group_is_active = candidate.parent_horizons.size() >= 2;
+    for (std::vector<int>::const_iterator parent_hn =
+             candidate.parent_horizons.begin();
+         group_is_active && parent_hn != candidate.parent_horizons.end();
+         ++parent_hn) {
+      const struct AH_data& parent = *state.AH_data_array[*parent_hn];
+      group_is_active =
+          parent.has_been_found &&
+          !parent.inside_confirmed_merger &&
+          (parent.status == horizon_status__individual ||
+           parent.status == horizon_status__confirmed);
+    }
+
+    // A Method #1 group remains active while its parents are connected using
+    // the enlarged release distance.  For a pair this is just one edge.
+    if (group_is_active) {
+      const int nparents = int(candidate.parent_horizons.size());
+      std::vector<bool> reached(nparents, false);
+      std::vector<int> queue(1, 0);
+      reached[0] = true;
+      for (std::vector<int>::size_type next = 0; next < queue.size(); ++next) {
+        const int i = queue[next];
+        const struct AH_data& AH_i =
+            *state.AH_data_array[candidate.parent_horizons[i]];
+        for (int j = 0; j < nparents; ++j) {
+          if (reached[j]) {
+            continue;
+          }
+          const struct AH_data& AH_j =
+              *state.AH_data_array[candidate.parent_horizons[j]];
+          const fp dx = AH_i.BH_diagnostics.centroid_x -
+                        AH_j.BH_diagnostics.centroid_x;
+          const fp dy = AH_i.BH_diagnostics.centroid_y -
+                        AH_j.BH_diagnostics.centroid_y;
+          const fp dz = AH_i.BH_diagnostics.centroid_z -
+                        AH_j.BH_diagnostics.centroid_z;
+          const fp distance = sqrt(dx*dx + dy*dy + dz*dz);
+          const fp release_distance =
+              4.0 * merger_release_factor * merger_search_factor *
+              (AH_i.mass + AH_j.mass);
+          if (distance < release_distance) {
+            reached[j] = true;
+            queue.push_back(j);
+          }
+        }
+      }
+      for (int i = 0; i < nparents; ++i) {
+        group_is_active = group_is_active && reached[i];
+      }
+    }
+
+    if (group_is_active) {
+      candidate.candidate_inactive_checks = 0;
+    } else {
+      ++candidate.candidate_inactive_checks;
+      if (candidate.candidate_inactive_checks >= merger_release_checks) {
+        candidates_to_reset.push_back(candidate_hn);
+      }
+    }
+  }
+
+  for (std::vector<int>::const_iterator candidate_hn =
+           candidates_to_reset.begin();
+       candidate_hn != candidates_to_reset.end(); ++candidate_hn) {
+    if (state.my_proc == 0) {
+      CCTK_VInfo(CCTK_THORNSTRING,
+                 "Releasing unconverged candidate horizon %d after %d "
+                 "consecutive inactive checks",
+                 *candidate_hn, int(merger_release_checks));
+    }
+    reset_candidate_slot(CCTK_PASS_CTOC, *candidate_hn);
+  }
+}
+}
 
 //******************************************************************************
 
@@ -157,7 +489,13 @@ for (int hn = 1; hn <= state.my_hs->N_horizons(); ++ hn)
   const int my_find_every = (find_every_individual[hn] >= 0
                              ? find_every_individual[hn]
                              : find_every);
-  const bool find_this =    cctk_iteration >= my_find_after
+  struct AH_data& AH_data = *state.AH_data_array[hn];
+  const bool lifecycle_allows_search =
+                            AH_data.status == horizon_status__individual
+                         || AH_data.status == horizon_status__candidate
+                         || AH_data.status == horizon_status__confirmed;
+  const bool find_this =    lifecycle_allows_search
+                         && cctk_iteration >= my_find_after
                          && (my_dont_find_after < 0
                              ? true
                              : cctk_iteration <= my_dont_find_after)
@@ -167,8 +505,8 @@ for (int hn = 1; hn <= state.my_hs->N_horizons(); ++ hn)
                              : cctk_time <= my_dont_find_after_time)
                          && my_find_every > 0
                          && cctk_iteration % my_find_every == 0
-                         && ! disable_horizon[hn];
-  struct AH_data& AH_data = *state.AH_data_array[hn];
+                         && (AH_data.status != horizon_status__individual
+                             || ! disable_horizon[hn]);
   AH_data.search_flag = find_this;
   find_any = find_any || find_this;
 }
@@ -253,12 +591,20 @@ IO_info.output_mean_curvature
    = (IO_info.output_mean_curvature_every > 0)
      && ((IO_info.time_iteration % IO_info.output_mean_curvature_every) == 0);
 
+// Discover merger candidates before preparing initial guesses and running
+// Newton.  Newly created candidates have search_flag set by the discovery
+// routine, so they are solved in this same horizon-finder call.
+if (state.method == method__find_horizons)
+   then discover_method1_mergers(CCTK_PASS_CTOC);
+
 // set initial guess for any (genuine) horizons that need it,
 // i.e. for any (genuine) horizons where we didn't find the horizon previously
 	for (int hn = hs.init_hn() ; hs.is_genuine() ; hn = hs.next_hn())
 	{
 	assert( state.AH_data_array[hn] != NULL );
 	struct AH_data& AH_data = *state.AH_data_array[hn];
+	if (!AH_data.search_flag)
+	   then continue;
         if (verbose_info.print_algorithm_details) {
           printf ("AHF find_horizons[%d] initial_find_flag=%d\n", hn, (int) AH_data.initial_find_flag);
           printf ("AHF find_horizons[%d] really_initial_find_flag=%d\n", hn, (int) AH_data.really_initial_find_flag);
@@ -332,6 +678,57 @@ case method__find_horizons:
 	       IO_info, state.BH_diagnostics_info, broadcast_horizon_shape,
 	       error_info, verbose_info,
 	       state.isb);
+	std::vector<int> converged_candidates;
+	for (int hn = 1; hn <= N_horizons; ++hn)
+	  {
+	  struct AH_data& AH_data = *state.AH_data_array[hn];
+	  if (AH_data.found_flag)
+	     then {
+		  if (AH_data.status == horizon_status__candidate)
+		     then converged_candidates.push_back(hn);
+		  else AH_data.has_been_found = true;
+		  }
+	  else if (AH_data.search_flag &&
+	           AH_data.status == horizon_status__candidate)
+	     then ++AH_data.candidate_failed_searches;
+	  }
+	std::sort(converged_candidates.begin(), converged_candidates.end(),
+	          [](const int a, const int b) {
+	            const std::size_t size_a =
+	                state.AH_data_array[a]->parent_horizons.size();
+	            const std::size_t size_b =
+	                state.AH_data_array[b]->parent_horizons.size();
+	            return size_a != size_b ? size_a < size_b : a < b;
+	          });
+	for (std::vector<int>::const_iterator candidate_hn =
+	         converged_candidates.begin();
+	     candidate_hn != converged_candidates.end(); ++candidate_hn)
+	  {
+	  const struct AH_data& candidate = *state.AH_data_array[*candidate_hn];
+	  bool parent_was_enclosed = false;
+	  for (std::vector<int>::const_iterator parent_hn =
+	           candidate.parent_horizons.begin();
+	       parent_hn != candidate.parent_horizons.end(); ++parent_hn)
+	    {
+	    parent_was_enclosed =
+	        parent_was_enclosed ||
+	        state.AH_data_array[*parent_hn]->inside_confirmed_merger;
+	    }
+	  if (parent_was_enclosed)
+	     then {
+		  if (state.my_proc == 0)
+		     then CCTK_VInfo(
+		         CCTK_THORNSTRING,
+		         "Discarding simultaneously converged candidate horizon %d "
+		         "because a smaller overlapping candidate was promoted first",
+		         *candidate_hn);
+		  reset_candidate_slot(CCTK_PASS_CTOC, *candidate_hn);
+		  }
+	  else promote_candidate_slot(*candidate_hn);
+	  }
+	// Release is deliberately last: every candidate discovered above first
+	// receives a Newton solve and a chance to be promoted on this iteration.
+	release_method1_candidates(CCTK_PASS_CTOC);
 	if (state.timer_handle >= 0)
 	   then CCTK_TimerStopI(state.timer_handle);
 	break;

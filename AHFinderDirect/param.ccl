@@ -38,6 +38,14 @@ USES INT nsurfaces
 USES INT maxntheta
 USES INT maxnphi
 
+# Get parameters from BHClusterX
+SHARES: BHClusterX
+USES KEYWORD npunctures
+USES KEYWORD mass
+USES KEYWORD posx
+USES KEYWORD posy
+USES KEYWORD posz
+
 # all remaining parameters are private to this thorn
 private:
 
@@ -89,6 +97,88 @@ real dont_find_after_individual_time[101] "when should we stop finding individua
 boolean disable_horizon[101] "should this horizon be disabled?" STEERABLE=always
 {
 } "false"
+
+################################################################################
+
+#
+# ***** dynamical merger discovery *****
+#
+
+boolean discover_mergers \
+  "dynamically search for new common horizons around nearby confirmed horizons" \
+  STEERABLE=always
+{
+} "false"
+
+real merger_search_factor \
+  "Method #1 search factor in d_ij < 4 merger_search_factor (m_i + m_j)" \
+  STEERABLE=always
+{
+0.0:* :: "any non-negative search factor"
+} 1.0
+
+real merger_pre_factor \
+  "candidate coordinate-sphere radius as a factor times M_tot" \
+  STEERABLE=always
+{
+(0.0:* :: "any positive merger initial-guess factor"
+} 2.0
+
+boolean merger_allow_group_mergers \
+  "Method #1: combine connected nearby pairs into groups of arbitrary size" \
+  STEERABLE=always
+{
+} "true"
+
+boolean merger_search_compact_groups \
+  "also search for compact groups of three or more horizons using Method #2" \
+  STEERABLE=always
+{
+} "false"
+
+real merger_compact_search_factor \
+  "Method #2 search factor in max(d_ij) < 4 merger_compact_search_factor M_tot" \
+  STEERABLE=always
+{
+0.0:* :: "any non-negative compact-group search factor"
+} 1.0
+
+int merger_compact_max_group_size \
+  "largest group considered by the Method #2 compact-group search" \
+  STEERABLE=always
+{
+3:100 :: "groups contain between three and this many horizons"
+} 100
+
+real merger_enclosing_radius_factor \
+  "require the candidate enclosing radius to be less than 2 factor M_tot" \
+  STEERABLE=always
+{
+0.0:* :: "any non-negative enclosing-radius factor"
+} 1.0
+
+int max_active_merger_candidates \
+  "maximum number of unconverged merger candidates active at once" \
+  STEERABLE=always
+{
+1:100 :: "at least one and no more than the compiled horizon-slot limit"
+} 100
+
+real merger_release_factor \
+  "multiply a candidate's creation-distance threshold by this for release hysteresis" \
+  STEERABLE=always
+{
+1.0:* :: "release distance must be at least the creation distance"
+} 1.25
+
+int merger_release_checks \
+  "number of consecutive failed release checks before discarding a candidate" \
+  STEERABLE=always
+{
+1:* :: "discard after at least one failed check"
+} 3
+
+################################################################################
 
 #
 # These parameters control which schedule bin (or even bins, if you
