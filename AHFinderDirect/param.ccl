@@ -110,13 +110,6 @@ boolean discover_mergers \
 {
 } "true"
 
-string merger_event_file_name \
-  "file recording converged merger daughters and their parent horizons" \
-  STEERABLE=recover
-{
-".+" :: "any nonempty file name"
-} "AH_mergers.txt"
-
 real merger_search_factor \
   "Method #1 search factor in d_ij < 4 merger_search_factor (m_i + m_j)" \
   STEERABLE=always
