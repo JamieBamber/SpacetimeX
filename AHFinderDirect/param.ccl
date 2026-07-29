@@ -40,11 +40,11 @@ USES INT maxnphi
 
 # Get parameters from BHClusterX
 SHARES: BHClusterX
-USES KEYWORD npunctures
-USES KEYWORD mass
-USES KEYWORD posx
-USES KEYWORD posy
-USES KEYWORD posz
+USES INT npunctures
+USES REAL mass
+USES REAL posx
+USES REAL posy
+USES REAL posz
 
 # all remaining parameters are private to this thorn
 private:
@@ -54,6 +54,12 @@ private:
 #
 # ***** overall parameters *****
 #
+
+boolean read_from_BHClusterX \
+  "initialize individual horizons from BHClusterX puncture parameters" \
+  STEERABLE=always
+{
+} "true"
 
 # set this to (try to) find apparent horizons at every time step
 int find_every "how often should we try to find apparent horizons?" STEERABLE=always
@@ -178,6 +184,13 @@ int merger_release_checks \
 1:* :: "discard after at least one failed check"
 } 3
 
+string merger_event_file_name \
+  "name of the merger-event file in BH_diagnostics_directory" \
+  STEERABLE=recover
+{
+".+" :: "any nonempty file name"
+} "AH_mergers"
+
 ################################################################################
 
 #
@@ -272,7 +285,7 @@ int which_horizon_to_announce_centroid \
 #
 int which_surface_to_store_info[101] \
   "into which surface should we store the info?" \
-  STEERABLE=recover
+  STEERABLE=always
 {
 -1  :: "don't store info"
 0:* :: "store info into the corresponding surface"
@@ -1200,15 +1213,15 @@ int max_allowable_Theta_nonshrink_iterations \
 # of the horizon radius is no problem, and even 1/2 the horizon radius
 # only slows the convergence by an extra iteration or two.
 #
-real origin_x[101] "global x coordinate of patch system origin" STEERABLE=recover
+real origin_x[101] "global x coordinate of patch system origin" STEERABLE=always
 {
 *:* :: "any real number"
 } 0.0
-real origin_y[101] "global y coordinate of patch system origin" STEERABLE=recover
+real origin_y[101] "global y coordinate of patch system origin" STEERABLE=always
 {
 *:* :: "any real number"
 } 0.0
-real origin_z[101] "global z coordinate of patch system origin" STEERABLE=recover
+real origin_z[101] "global z coordinate of patch system origin" STEERABLE=always
 {
 *:* :: "any real number"
 } 0.0
@@ -1249,7 +1262,7 @@ string track_origin_source_z[101] "grid scalar containing the x component of the
 # but alas they don't work yet for apparent horizon finding
 # (the Jacobian computation doesn't yet grok the nonlocal rotation BCs).
 #
-keyword patch_system_type[101] "what type of patch system should we use?"
+keyword patch_system_type[101] "what type of patch system should we use?" STEERABLE=always
 {
 # choose this for normal use
 "match Cactus grid symmetry" :: \

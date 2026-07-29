@@ -496,22 +496,70 @@ extern "C"
   
   // Read parameters from BHClusterX
   if (read_from_BHClusterX) {
+    const auto set_array_parameter =
+      [](const char *base_name, const int index, const char *value)
+      {
+        char parameter_name[256];
+        const int nchars =
+          snprintf(parameter_name, sizeof parameter_name,
+                   "%s[%d]", base_name, index);
+        if (nchars < 0 ||
+            static_cast<size_t>(nchars) >= sizeof parameter_name) {
+          CCTK_VError(__LINE__, __FILE__, CCTK_THORNSTRING,
+                      "Unable to form indexed parameter name for %s[%d]",
+                      base_name, index);
+        }
+
+        const int status =
+          CCTK_ParameterSet(parameter_name, CCTK_THORNSTRING, value);
+        if (status != 0) {
+          CCTK_VError(__LINE__, __FILE__, CCTK_THORNSTRING,
+                      "Could not set parameter %s to \"%s\": "
+                      "CCTK_ParameterSet returned %d",
+                      parameter_name, value, status);
+        }
+      };
+
+    const auto set_real_array_parameter =
+      [&set_array_parameter](const char *base_name, const int index,
+                             const CCTK_REAL value)
+      {
+        char value_string[64];
+        snprintf(value_string, sizeof value_string, "%.17g",
+                 static_cast<double>(value));
+        set_array_parameter(base_name, index, value_string);
+      };
+
+    const auto set_int_array_parameter =
+      [&set_array_parameter](const char *base_name, const int index,
+                             const int value)
+      {
+        char value_string[64];
+        snprintf(value_string, sizeof value_string, "%d", value);
+        set_array_parameter(base_name, index, value_string);
+      };
+
     for (int iAH = 1; iAH < N_horizons; iAH++){
       if (iAH <= npunctures){
-        initial_guess__coord_sphere__x_center[iAH] = posx[iAH-1];
-        initial_guess__coord_sphere__y_center[iAH] = posy[iAH-1];
-        initial_guess__coord_sphere__z_center[iAH] = posz[iAH-1];
-        origin_x[iAH] = posx[iAH-1];
-        origin_y[iAH] = posy[iAH-1];
-        origin_z[iAH] = posz[iAH-1];
-        initial_guess__coord_sphere__radius[iAH] = 0.5*mass[iAH-1]; // for Bowen-York initial data
-        find_after_individual_time[iAH] = 0.0;
+        set_real_array_parameter("initial_guess__coord_sphere__x_center",
+                                 iAH, posx[iAH-1]);
+        set_real_array_parameter("initial_guess__coord_sphere__y_center",
+                                 iAH, posy[iAH-1]);
+        set_real_array_parameter("initial_guess__coord_sphere__z_center",
+                                 iAH, posz[iAH-1]);
+        set_real_array_parameter("origin_x", iAH, posx[iAH-1]);
+        set_real_array_parameter("origin_y", iAH, posy[iAH-1]);
+        set_real_array_parameter("origin_z", iAH, posz[iAH-1]);
+        // Suitable initial coordinate radius for Bowen-York initial data.
+        set_real_array_parameter("initial_guess__coord_sphere__radius",
+                                 iAH, 0.5*mass[iAH-1]);
+        set_real_array_parameter("find_after_individual_time", iAH, 0.0);
       } else {
-        disable_horizon[iAH] = "true";
-      }                              
-      initial_guess_method[iAH] = "coordinate sphere";
-      which_surface_to_store_info[iAH] = iAH - 1;
-      patch_system_type[iAH] = "full sphere";
+        set_array_parameter("disable_horizon", iAH, "true");
+      }
+      set_array_parameter("initial_guess_method", iAH, "coordinate sphere");
+      set_int_array_parameter("which_surface_to_store_info", iAH, iAH - 1);
+      set_array_parameter("patch_system_type", iAH, "full sphere");
     }
   }
   

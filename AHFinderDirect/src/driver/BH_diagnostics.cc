@@ -890,9 +890,9 @@ void BH_diagnostics::load(CCTK_ARGUMENTS,
   // Reconstruct the merger geometry from checkpointed coordinates and the
   // recovered surface.  This must be available before the first discovery
   // pass following recovery.
-  origin_x = ps.origin_x();
-  origin_y = ps.origin_y();
-  origin_z = ps.origin_z();
+  this->origin_x = ps.origin_x();
+  this->origin_y = ps.origin_y();
+  this->origin_z = ps.origin_z();
   centroid_x = ah_centroid_x[horizon_number-1];
   centroid_y = ah_centroid_y[horizon_number-1];
   centroid_z = ah_centroid_z[horizon_number-1];

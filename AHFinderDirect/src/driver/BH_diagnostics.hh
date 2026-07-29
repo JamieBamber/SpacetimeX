@@ -153,12 +153,6 @@ private:
 					   bool src_gfn_is_even_across_yz_plane,
 			      enum patch::integration_method method);
 
-private:
-	// we forbid copying and passing by value
-	// by declaring the copy constructor and assignment operator
-	// private, but never defining them
-	BH_diagnostics(const BH_diagnostics& rhs);
-	BH_diagnostics& operator=(const BH_diagnostics& rhs);
 	};
 
 //******************************************************************************

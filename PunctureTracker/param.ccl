@@ -1,11 +1,11 @@
 # Parameter definitions for thorn PunctureTracker
 
 shares: BHClusterX
-USES KEYWORD npunctures
-USES KEYWORD mass
-USES KEYWORD posx
-USES KEYWORD posy
-USES KEYWORD posz
+USES CCTK_INT npunctures
+USES CCTK_REAL mass
+USES CCTK_REAL posx
+USES CCTK_REAL posy
+USES CCTK_REAL posz
 
 #################################################
 
