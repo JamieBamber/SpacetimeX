@@ -43,6 +43,17 @@ enum	horizon_status
 	};
 
 //
+// How a candidate parent group was selected.  Keep these numerical values
+// stable: they are stored in Cactus variables for checkpoint/recovery.
+//
+enum	candidate_discovery_method
+	{
+	candidate_discovery_method__none = 0,
+	candidate_discovery_method__method1 = 1,
+	candidate_discovery_method__method2 = 2
+	};
+
+//
 // this enum holds the decoded  verbose_method  parameter, i.e. it
 // specifies which (how many) informational messages we should print
 //
@@ -344,10 +355,12 @@ struct	AH_data
 	bool inside_confirmed_merger;
 	fp mass;		// proxy mass used for merger initial guesses
 	std::vector<int> parent_horizons;
+	enum candidate_discovery_method candidate_method;
 	int candidate_creation_iteration;
 	fp candidate_creation_time;
 	int candidate_failed_searches;
 	int candidate_inactive_checks;
+	bool merger_event_written;
 	bool h_files_written;	// have we written horizon-shape or similar
 					// files for this horizon yet?
 
@@ -379,6 +392,7 @@ struct	state
 	int N_active_procs;		// total number of active processors
 					// (the active processors are processor
 					//  numbers 0 to N_active_procs-1)
+	bool merger_event_file_initialized;
 
 	struct cactus_grid_info cgi;
 	struct geometry_info gi;
@@ -425,7 +439,8 @@ void initialize_candidate_slot(
 	fp candidate_origin_x,
 	fp candidate_origin_y,
 	fp candidate_origin_z,
-	fp candidate_radius);
+	fp candidate_radius,
+	enum candidate_discovery_method candidate_method);
 void reset_candidate_slot(CCTK_ARGUMENTS, int candidate_hn);
 extern "C"
   void AHFinderDirect_setup(CCTK_ARGUMENTS);

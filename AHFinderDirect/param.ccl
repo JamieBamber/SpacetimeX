@@ -108,7 +108,14 @@ boolean discover_mergers \
   "dynamically search for new common horizons around nearby confirmed horizons" \
   STEERABLE=always
 {
-} "false"
+} "true"
+
+string merger_event_file_name \
+  "file recording converged merger daughters and their parent horizons" \
+  STEERABLE=recover
+{
+".+" :: "any nonempty file name"
+} "AH_mergers.txt"
 
 real merger_search_factor \
   "Method #1 search factor in d_ij < 4 merger_search_factor (m_i + m_j)" \
@@ -137,7 +144,7 @@ boolean merger_search_compact_groups \
 } "false"
 
 real merger_compact_search_factor \
-  "Method #2 search factor in max(d_ij) < 4 merger_compact_search_factor M_tot" \
+  "Method #2 search factor in max(d_ij) <= 4 merger_compact_search_factor M_tot" \
   STEERABLE=always
 {
 0.0:* :: "any non-negative compact-group search factor"

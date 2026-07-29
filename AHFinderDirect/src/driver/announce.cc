@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <assert.h>
 #include <math.h>
+#include <algorithm>
 
 #include "util_Table.h"
 #include "cctk.h"
@@ -192,6 +193,124 @@ for (int hn = 1; hn <= N_horizons; ++ hn)
   // Load from grid array
   BH_diagnostics.load(cctkGH, hn);
 
+  }
+
+// Candidate initial guesses are derived from their recovered parents rather
+// than checkpointed separately.  This must be done only after all slots have
+// been loaded, since a parent may occupy any earlier or later horizon slot.
+for (int candidate_hn = 1; candidate_hn <= N_horizons; ++candidate_hn)
+  {
+  struct AH_data& candidate = *state.AH_data_array[candidate_hn];
+  if (candidate.status != horizon_status__candidate)
+     then continue;
+
+  if (candidate.parent_horizons.size() < 2)
+     then CCTK_VWarn(
+              FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+              "Recovered candidate horizon %d has fewer than two parents",
+              candidate_hn);
+
+  fp total_mass = 0.0;
+  for (std::vector<int>::const_iterator parent_hn =
+           candidate.parent_horizons.begin();
+       parent_hn != candidate.parent_horizons.end(); ++parent_hn)
+    {
+    const struct AH_data& parent = *state.AH_data_array[*parent_hn];
+    if (!parent.has_been_found ||
+        (parent.status != horizon_status__individual &&
+         parent.status != horizon_status__confirmed))
+       then CCTK_VWarn(
+                FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+                "Recovered candidate horizon %d has ineligible parent %d",
+                candidate_hn, *parent_hn);
+    total_mass += parent.mass;
+    }
+  if (!isfinite(total_mass) || total_mass <= 0.0)
+     then CCTK_VWarn(
+              FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+              "Recovered candidate horizon %d has invalid parent mass sum %g",
+              candidate_hn, double(total_mass));
+
+  fp center_x = 0.0;
+  fp center_y = 0.0;
+  fp center_z = 0.0;
+  if (candidate.candidate_method ==
+      candidate_discovery_method__method1)
+     then {
+	for (std::vector<int>::const_iterator parent_hn =
+	         candidate.parent_horizons.begin();
+	     parent_hn != candidate.parent_horizons.end(); ++parent_hn)
+	  {
+	  const struct AH_data& parent = *state.AH_data_array[*parent_hn];
+	  center_x += parent.mass * parent.BH_diagnostics.centroid_x;
+	  center_y += parent.mass * parent.BH_diagnostics.centroid_y;
+	  center_z += parent.mass * parent.BH_diagnostics.centroid_z;
+	  }
+	center_x /= total_mass;
+	center_y /= total_mass;
+	center_z /= total_mass;
+	}
+  else if (candidate.candidate_method ==
+           candidate_discovery_method__method2)
+     then {
+	const struct BH_diagnostics& first =
+	    state.AH_data_array[candidate.parent_horizons[0]]->BH_diagnostics;
+	fp min_x = first.origin_x - first.max_radius;
+	fp max_x = first.origin_x + first.max_radius;
+	fp min_y = first.origin_y - first.max_radius;
+	fp max_y = first.origin_y + first.max_radius;
+	fp min_z = first.origin_z - first.max_radius;
+	fp max_z = first.origin_z + first.max_radius;
+	for (std::vector<int>::size_type i = 1;
+	     i < candidate.parent_horizons.size(); ++i)
+	  {
+	  const struct BH_diagnostics& parent_diagnostics =
+	      state.AH_data_array[candidate.parent_horizons[i]]->BH_diagnostics;
+	  min_x = std::min(min_x, parent_diagnostics.origin_x -
+	                         parent_diagnostics.max_radius);
+	  max_x = std::max(max_x, parent_diagnostics.origin_x +
+	                         parent_diagnostics.max_radius);
+	  min_y = std::min(min_y, parent_diagnostics.origin_y -
+	                         parent_diagnostics.max_radius);
+	  max_y = std::max(max_y, parent_diagnostics.origin_y +
+	                         parent_diagnostics.max_radius);
+	  min_z = std::min(min_z, parent_diagnostics.origin_z -
+	                         parent_diagnostics.max_radius);
+	  max_z = std::max(max_z, parent_diagnostics.origin_z +
+	                         parent_diagnostics.max_radius);
+	  }
+	center_x = 0.5 * (min_x + max_x);
+	center_y = 0.5 * (min_y + max_y);
+	center_z = 0.5 * (min_z + max_z);
+	}
+  else CCTK_VWarn(
+           FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+           "Recovered candidate horizon %d has invalid discovery method %d",
+           candidate_hn, int(candidate.candidate_method));
+
+  const fp candidate_radius = merger_pre_factor * total_mass;
+  if (!isfinite(center_x) || !isfinite(center_y) ||
+      !isfinite(center_z) || !isfinite(candidate_radius) ||
+      candidate_radius <= 0.0)
+     then CCTK_VWarn(
+              FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+              "Could not reconstruct initial sphere for candidate horizon %d",
+              candidate_hn);
+
+  patch_system& ps = *candidate.ps_ptr;
+  ps.origin_x(center_x);
+  ps.origin_y(center_y);
+  ps.origin_z(center_z);
+  candidate.BH_diagnostics.origin_x = center_x;
+  candidate.BH_diagnostics.origin_y = center_y;
+  candidate.BH_diagnostics.origin_z = center_z;
+  candidate.initial_guess_info.method = initial_guess__coord_sphere;
+  candidate.initial_guess_info.reset_horizon_after_not_finding = true;
+  candidate.initial_guess_info.coord_sphere_info.x_center = center_x;
+  candidate.initial_guess_info.coord_sphere_info.y_center = center_y;
+  candidate.initial_guess_info.coord_sphere_info.z_center = center_z;
+  candidate.initial_guess_info.coord_sphere_info.radius = candidate_radius;
+  candidate.mass = total_mass;
   }
 }
 

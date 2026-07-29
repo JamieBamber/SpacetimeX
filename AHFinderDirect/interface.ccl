@@ -142,6 +142,8 @@ CCTK_INT ah_lifecycle[N_horizons] TYPE=scalar
   ah_candidate_failed_searches
   ah_candidate_inactive_checks
   ah_candidate_parent_count
+  ah_candidate_discovery_method
+  ah_merger_event_written
 }
 
 CCTK_REAL ah_candidate_times[N_horizons] TYPE=scalar

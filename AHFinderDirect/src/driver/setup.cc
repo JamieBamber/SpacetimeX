@@ -281,7 +281,8 @@ void initialize_candidate_slot(
     const fp candidate_origin_x,
     const fp candidate_origin_y,
     const fp candidate_origin_z,
-    const fp candidate_radius)
+    const fp candidate_radius,
+    const enum candidate_discovery_method candidate_method)
 {
   DECLARE_CCTK_ARGUMENTS;
   DECLARE_CCTK_PARAMETERS;
@@ -295,6 +296,12 @@ void initialize_candidate_slot(
     CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
                "Candidate horizon %d must have at least two parents",
                candidate_hn);
+  }
+  if (candidate_method != candidate_discovery_method__method1 &&
+      candidate_method != candidate_discovery_method__method2) {
+    CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+               "Candidate horizon %d has invalid discovery method %d",
+               candidate_hn, int(candidate_method));
   }
   if (!isfinite(candidate_origin_x) || !isfinite(candidate_origin_y) ||
       !isfinite(candidate_origin_z) || !isfinite(candidate_radius) ||
@@ -377,10 +384,12 @@ void initialize_candidate_slot(
   candidate.inside_confirmed_merger = false;
   candidate.mass = candidate_mass;
   candidate.parent_horizons = canonical_parent_group(parent_horizons);
+  candidate.candidate_method = candidate_method;
   candidate.candidate_creation_iteration = cctk_iteration;
   candidate.candidate_creation_time = cctk_time;
   candidate.candidate_failed_searches = 0;
   candidate.candidate_inactive_checks = 0;
+  candidate.merger_event_written = false;
   candidate.h_files_written = false;
   candidate.BH_diagnostics = BH_diagnostics();
 
@@ -435,10 +444,12 @@ void reset_candidate_slot(CCTK_ARGUMENTS, const int candidate_hn)
   candidate.inside_confirmed_merger = false;
   candidate.mass = 0.0;
   candidate.parent_horizons.clear();
+  candidate.candidate_method = candidate_discovery_method__none;
   candidate.candidate_creation_iteration = -1;
   candidate.candidate_creation_time = 0.0;
   candidate.candidate_failed_searches = 0;
   candidate.candidate_inactive_checks = 0;
+  candidate.merger_event_written = false;
   candidate.h_files_written = false;
   candidate.BH_diagnostics = BH_diagnostics();
 
@@ -579,6 +590,7 @@ extern "C"
 
   state.N_horizons = N_horizons;
   state.N_active_procs = 0;	// dummy value, will be set properly later
+  state.merger_event_file_initialized = false;
   CCTK_VInfo(CCTK_THORNSTRING,
              "           to search for %d horizon%s on %d processor%s",
   	   state.N_horizons, ((state.N_horizons == 1) ? "" : "s"),
@@ -993,10 +1005,12 @@ extern "C"
   	AH_data.mass =
   	    read_from_BHClusterX && hn <= npunctures ? mass[hn-1] : 0.0;
   	AH_data.parent_horizons.clear();
+	AH_data.candidate_method = candidate_discovery_method__none;
   	AH_data.candidate_creation_iteration = -1;
   	AH_data.candidate_creation_time = 0.0;
   	AH_data.candidate_failed_searches = 0;
   	AH_data.candidate_inactive_checks = 0;
+	AH_data.merger_event_written = false;
   	AH_data.h_files_written = false;
   	AH_data.BH_diagnostics_fileptr = NULL;
 	}
@@ -1030,6 +1044,8 @@ extern "C"
     ah_status[n]                   = AH_data.status;
     ah_has_been_found[n]           = AH_data.has_been_found;
     ah_inside_confirmed_merger[n]  = AH_data.inside_confirmed_merger;
+    ah_candidate_discovery_method[n] = AH_data.candidate_method;
+    ah_merger_event_written[n] = AH_data.merger_event_written;
     if (verbose_info.print_algorithm_details) {
       printf ("AHF setup %d initial_find_flag=%d\n",        n+1, (int) AH_data.initial_find_flag);
       printf ("AHF setup %d really_initial_find_flag=%d\n", n+1, (int) AH_data.really_initial_find_flag);

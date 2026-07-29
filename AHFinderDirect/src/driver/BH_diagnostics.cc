@@ -822,6 +822,10 @@ void BH_diagnostics::save(CCTK_ARGUMENTS,
       = AH_data.candidate_inactive_checks;
   ah_candidate_parent_count[horizon_number-1]
       = CCTK_INT(AH_data.parent_horizons.size());
+  ah_candidate_discovery_method[horizon_number-1]
+      = AH_data.candidate_method;
+  ah_merger_event_written[horizon_number-1]
+      = AH_data.merger_event_written;
   for (int parent = 0; parent < N_horizons; ++parent) {
     ah_candidate_parent[parent + N_horizons * (horizon_number-1)]
         = parent < int(AH_data.parent_horizons.size())
@@ -855,8 +859,12 @@ void BH_diagnostics::load(CCTK_ARGUMENTS,
   struct AH_data& AH_data = *state.AH_data_array[horizon_number];
   patch_system& ps = *AH_data.ps_ptr;
   
-  // only use stored origins if horizon had not yet been found!
-  if (ah_found_flag[horizon_number-1]) {
+  // Dynamic candidates have an origin chosen by merger discovery even when
+  // their latest Newton solve did not converge.
+  const CCTK_INT checkpoint_status = ah_status[horizon_number-1];
+  if (ah_found_flag[horizon_number-1] ||
+      checkpoint_status == horizon_status__candidate ||
+      checkpoint_status == horizon_status__confirmed) {
     ps.origin_x(ah_origin_x[horizon_number-1]);
     ps.origin_y(ah_origin_y[horizon_number-1]);
     ps.origin_z(ah_origin_z[horizon_number-1]);
@@ -878,12 +886,26 @@ void BH_diagnostics::load(CCTK_ARGUMENTS,
   // recover the full ghosted-grid horizon shape
   // (we only save and load the nominal-grid shape)
   ps.synchronize();
+
+  // Reconstruct the merger geometry from checkpointed coordinates and the
+  // recovered surface.  This must be available before the first discovery
+  // pass following recovery.
+  origin_x = ps.origin_x();
+  origin_y = ps.origin_y();
+  origin_z = ps.origin_z();
+  centroid_x = ah_centroid_x[horizon_number-1];
+  centroid_y = ah_centroid_y[horizon_number-1];
+  centroid_z = ah_centroid_z[horizon_number-1];
+  jtutil::norm<fp> recovered_h_norms;
+  ps.ghosted_gridfn_norms(gfns::gfn__h, recovered_h_norms);
+  min_radius = recovered_h_norms.min_abs_value();
+  max_radius = recovered_h_norms.max_abs_value();
   
   AH_data.initial_find_flag        = ah_initial_find_flag       [horizon_number-1];
   AH_data.really_initial_find_flag = ah_really_initial_find_flag[horizon_number-1];
   AH_data.search_flag              = ah_search_flag             [horizon_number-1];
   AH_data.found_flag               = ah_found_flag              [horizon_number-1];
-  const CCTK_INT saved_status = ah_status[horizon_number-1];
+  const CCTK_INT saved_status = checkpoint_status;
   if (saved_status < horizon_status__unused ||
       saved_status > horizon_status__confirmed)
   {
@@ -904,6 +926,37 @@ void BH_diagnostics::load(CCTK_ARGUMENTS,
       ah_candidate_failed_searches[horizon_number-1];
   AH_data.candidate_inactive_checks =
       ah_candidate_inactive_checks[horizon_number-1];
+  const CCTK_INT saved_candidate_method =
+      ah_candidate_discovery_method[horizon_number-1];
+  if (saved_candidate_method < candidate_discovery_method__none ||
+      saved_candidate_method > candidate_discovery_method__method2) {
+    CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+               "Invalid checkpointed candidate discovery method %d for "
+               "horizon %d",
+               int(saved_candidate_method), horizon_number);
+  }
+  AH_data.candidate_method =
+      static_cast<enum candidate_discovery_method>(saved_candidate_method);
+  AH_data.merger_event_written =
+      ah_merger_event_written[horizon_number-1] != 0;
+  const bool merger_horizon =
+      AH_data.status == horizon_status__candidate ||
+      AH_data.status == horizon_status__confirmed;
+  if (merger_horizon !=
+      (AH_data.candidate_method != candidate_discovery_method__none)) {
+    CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+               "Inconsistent checkpointed lifecycle status %d and candidate "
+               "discovery method %d for horizon %d",
+               int(AH_data.status), int(AH_data.candidate_method),
+               horizon_number);
+  }
+  if (AH_data.merger_event_written &&
+      AH_data.status != horizon_status__confirmed) {
+    CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+               "Checkpoint says a merger event was written for non-confirmed "
+               "horizon %d with lifecycle status %d",
+               horizon_number, int(AH_data.status));
+  }
   const CCTK_INT parent_count =
       ah_candidate_parent_count[horizon_number-1];
   if (parent_count < 0 || parent_count > N_horizons) {
