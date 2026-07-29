@@ -1,18 +1,5 @@
 # Parameter definitions for thorn PunctureTracker
 
-shares: BHClusterX
-USES CCTK_INT npunctures
-USES CCTK_REAL mass
-USES CCTK_REAL posx
-USES CCTK_REAL posy
-USES CCTK_REAL posz
-
-#################################################
-
-BOOLEAN initialize_using_BHClusterX "use BHClusterX to input data?" STEERABLE=always
-{
-} "yes"
-
 BOOLEAN verbose "speak up?" STEERABLE=always
 {
 } "no"

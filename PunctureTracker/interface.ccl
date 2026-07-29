@@ -33,12 +33,12 @@ CCTK_INT pt_group_count[1] TYPE=scalar
   pt_num_groups
 } "Number of effective grouped sources"
 
-CCTK_INT pt_membership[10] TYPE=scalar
+CCTK_INT pt_membership[100] TYPE=scalar
 {
   pt_group_membership
 } "Effective grouped source index for each puncture"
 
-CCTK_REAL pt_group_loc[10] TYPE=scalar
+CCTK_REAL pt_group_loc[100] TYPE=scalar
 {
   pt_group_t pt_group_x pt_group_y pt_group_z
 } "Location of effective grouped sources"
