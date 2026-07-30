@@ -35,6 +35,7 @@ USES STRING out_dir
 # a non-existing one
 shares: SphericalSurface
 USES INT nsurfaces
+USES INT num_extraction_surface
 USES INT maxntheta
 USES INT maxnphi
 

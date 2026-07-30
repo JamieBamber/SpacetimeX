@@ -494,9 +494,7 @@ extern "C"
 
   already_ran = true;
   
-  // Read parameters from BHClusterX
-  if (read_from_BHClusterX) {
-    const auto set_array_parameter =
+  const auto set_array_parameter =
       [](const char *base_name, const int index, const char *value)
       {
         char parameter_name[256];
@@ -520,7 +518,7 @@ extern "C"
         }
       };
 
-    const auto set_real_array_parameter =
+  const auto set_real_array_parameter =
       [&set_array_parameter](const char *base_name, const int index,
                              const CCTK_REAL value)
       {
@@ -530,7 +528,7 @@ extern "C"
         set_array_parameter(base_name, index, value_string);
       };
 
-    const auto set_int_array_parameter =
+  const auto set_int_array_parameter =
       [&set_array_parameter](const char *base_name, const int index,
                              const int value)
       {
@@ -539,7 +537,26 @@ extern "C"
         set_array_parameter(base_name, index, value_string);
       };
 
-    for (int iAH = 1; iAH < N_horizons; iAH++){
+  if (num_extraction_surface + N_horizons > nsurfaces) {
+    CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+               "AHFinderDirect requires %d SphericalSurface slots "
+               "(%d extraction surfaces plus %d apparent horizons), but "
+               "SphericalSurface::nsurfaces is only %d. Increase "
+               "SphericalSurface::nsurfaces.",
+               int(num_extraction_surface + N_horizons),
+               int(num_extraction_surface), int(N_horizons), int(nsurfaces));
+  }
+
+  // AHFinderDirect horizon numbers are one-based; SphericalSurface slots are
+  // zero-based and follow the extraction-surface slots.
+  for (int iAH = 1; iAH <= N_horizons; ++iAH) {
+    set_int_array_parameter("which_surface_to_store_info", iAH,
+                            num_extraction_surface + iAH - 1);
+  }
+
+  // Read parameters from BHClusterX.
+  if (read_from_BHClusterX) {
+    for (int iAH = 1; iAH <= N_horizons; iAH++){
       if (iAH <= npunctures){
         set_real_array_parameter("initial_guess__coord_sphere__x_center",
                                  iAH, posx[iAH-1]);
@@ -558,7 +575,6 @@ extern "C"
         set_array_parameter("disable_horizon", iAH, "true");
       }
       set_array_parameter("initial_guess_method", iAH, "coordinate sphere");
-      set_int_array_parameter("which_surface_to_store_info", iAH, iAH - 1);
       set_array_parameter("patch_system_type", iAH, "full sphere");
     }
   }

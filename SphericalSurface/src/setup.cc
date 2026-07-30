@@ -86,9 +86,85 @@ static bool all_sf_names_are_unique(CCTK_INT warnlevel)
 extern "C" void SphericalSurface_ParamCheck (CCTK_ARGUMENTS)
 {
   DECLARE_CCTK_ARGUMENTS_SphericalSurface_ParamCheck;
+  DECLARE_CCTK_PARAMETERS;
 
   if (!all_sf_names_are_unique(CCTK_WARN_ALERT)) {
     CCTK_PARAMWARN("Not all spherical surface names are unique.");
+  }
+
+  if (num_extraction_surface > nsurfaces) {
+    CCTK_PARAMWARN("SphericalSurface::num_extraction_surface must not exceed SphericalSurface::nsurfaces.");
+  }
+
+  for (int n = 0; n < nsurfaces; ++n) {
+    const CCTK_INT selected_ntheta =
+      n < num_extraction_surface ? ntheta_extraction : ntheta_AH;
+    const CCTK_INT selected_nphi =
+      n < num_extraction_surface ? nphi_extraction : nphi_AH;
+
+    if (selected_ntheta < 3 * nghoststheta[n]) {
+      CCTK_VParamWarn(CCTK_THORNSTRING,
+                      "Selected ntheta=%d for surface %d must be at least "
+                      "3*nghoststheta[%d]=%d.",
+                      int(selected_ntheta), n, n,
+                      int(3 * nghoststheta[n]));
+    }
+    if (selected_nphi < 3 * nghostsphi[n]) {
+      CCTK_VParamWarn(CCTK_THORNSTRING,
+                      "Selected nphi=%d for surface %d must be at least "
+                      "3*nghostsphi[%d]=%d.",
+                      int(selected_nphi), n, n,
+                      int(3 * nghostsphi[n]));
+    }
+    if (selected_ntheta > maxntheta) {
+      CCTK_VParamWarn(CCTK_THORNSTRING,
+                      "Selected ntheta=%d for surface %d exceeds "
+                      "maxntheta=%d; increase SphericalSurface::maxntheta.",
+                      int(selected_ntheta), n, int(maxntheta));
+    }
+    if (selected_nphi > maxnphi) {
+      CCTK_VParamWarn(CCTK_THORNSTRING,
+                      "Selected nphi=%d for surface %d exceeds "
+                      "maxnphi=%d; increase SphericalSurface::maxnphi.",
+                      int(selected_nphi), n, int(maxnphi));
+    }
+  }
+}
+
+extern "C" void SphericalSurface_SetResolutionParameters (CCTK_ARGUMENTS)
+{
+  DECLARE_CCTK_ARGUMENTS_SphericalSurface_SetResolutionParameters;
+  DECLARE_CCTK_PARAMETERS;
+
+  for (int n = 0; n < nsurfaces; ++n) {
+    const CCTK_INT selected_ntheta =
+      n < num_extraction_surface ? ntheta_extraction : ntheta_AH;
+    const CCTK_INT selected_nphi =
+      n < num_extraction_surface ? nphi_extraction : nphi_AH;
+    char parameter_name[64];
+    char value[64];
+
+    snprintf(parameter_name, sizeof parameter_name, "ntheta[%d]", n);
+    snprintf(value, sizeof value, "%d", int(selected_ntheta));
+    const int ntheta_status =
+      CCTK_ParameterSet(parameter_name, CCTK_THORNSTRING, value);
+    if (ntheta_status != 0) {
+      CCTK_VError(__LINE__, __FILE__, CCTK_THORNSTRING,
+                  "Could not set SphericalSurface::%s to %s: "
+                  "CCTK_ParameterSet returned %d",
+                  parameter_name, value, ntheta_status);
+    }
+
+    snprintf(parameter_name, sizeof parameter_name, "nphi[%d]", n);
+    snprintf(value, sizeof value, "%d", int(selected_nphi));
+    const int nphi_status =
+      CCTK_ParameterSet(parameter_name, CCTK_THORNSTRING, value);
+    if (nphi_status != 0) {
+      CCTK_VError(__LINE__, __FILE__, CCTK_THORNSTRING,
+                  "Could not set SphericalSurface::%s to %s: "
+                  "CCTK_ParameterSet returned %d",
+                  parameter_name, value, nphi_status);
+    }
   }
 }
       

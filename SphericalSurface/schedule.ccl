@@ -12,7 +12,13 @@ STORAGE: sf_maxreflevel
 
 
 
-SCHEDULE SphericalSurface_SetupRes AT basegrid BEFORE SphericalSurface_Setup AFTER SpatialCoordinates AFTER CorrectCoordinates
+SCHEDULE SphericalSurface_SetResolutionParameters AT basegrid BEFORE SphericalSurface_SetupRes
+{
+  LANG: C
+  OPTIONS: global
+} "Configure extraction and apparent-horizon surface resolutions"
+
+SCHEDULE SphericalSurface_SetupRes AT basegrid BEFORE SphericalSurface_Setup AFTER SphericalSurface_SetResolutionParameters AFTER SpatialCoordinates AFTER CorrectCoordinates
 {
   LANG: C
   OPTIONS: global loop-local

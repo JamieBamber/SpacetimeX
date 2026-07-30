@@ -3,16 +3,41 @@
 RESTRICTED:
 
 # You can enlarge the possible number of surfaces by changing the maximum
-# 42 in the parameter nsurfaces, and by changing the array sizes [42] found
+# 100 in the parameter nsurfaces, and by changing the array sizes [100] found
 # in many of the parameters below.
 
 CCTK_INT nsurfaces "Number of surfaces" STEERABLE=recover
 {
-  0:42 :: ""
+  0:100 :: ""
 } 0
 
+CCTK_INT num_extraction_surface "Number of leading slots reserved for extraction surfaces" STEERABLE=recover
+{
+  0:100 :: ""
+} 0
+
+CCTK_INT ntheta_extraction "Theta resolution for extraction surfaces" STEERABLE=recover
+{
+  0:* :: "must be at least 3*nghoststheta and no greater than maxntheta"
+} 19
+
+CCTK_INT nphi_extraction "Phi resolution for extraction surfaces" STEERABLE=recover
+{
+  0:* :: "must be at least 3*nghostsphi and no greater than maxnphi"
+} 38
+
+CCTK_INT ntheta_AH "Theta resolution for apparent-horizon surfaces" STEERABLE=recover
+{
+  0:* :: "must be at least 3*nghoststheta and no greater than maxntheta"
+} 19
+
+CCTK_INT nphi_AH "Phi resolution for apparent-horizon surfaces" STEERABLE=recover
+{
+  0:* :: "must be at least 3*nghostsphi and no greater than maxnphi"
+} 38
+
 # can be queried via SphericalSurface_IdFromName()
-CCTK_STRING name[42] "User friendly name of spherical surface" STEERABLE=always
+CCTK_STRING name[100] "User friendly name of spherical surface" STEERABLE=always
 {
   ""   :: "none set"
   ".*" :: "any string"
@@ -21,18 +46,18 @@ CCTK_STRING name[42] "User friendly name of spherical surface" STEERABLE=always
 
 # Warning: this will MPI hang when the number of components per refinement
 # level differs between processors
-BOOLEAN auto_res[42] "Automatically determine resolution according to radius and Cartesian resolution"
+BOOLEAN auto_res[100] "Automatically determine resolution according to radius and Cartesian resolution"
 {
 } no
 
 
-CCTK_REAL auto_res_ratio[42] "Multiplicative factor by which we want to scale the resolution with respect to Cartesian resolution"
+CCTK_REAL auto_res_ratio[100] "Multiplicative factor by which we want to scale the resolution with respect to Cartesian resolution"
 {
   0:* :: ""
 } 2.0
 
 
-KEYWORD auto_res_grid[42] "Choose resolution according to how grids overlap"   
+KEYWORD auto_res_grid[100] "Choose resolution according to how grids overlap"   
 {
   "fully contained" :: "SF must be fully contained in Cartesian grid"
   "overlap"         :: "SF overlaps with grid"
@@ -65,39 +90,39 @@ CCTK_INT maxnphi "Maximum number of grid points in the phi direction" STEERABLE=
 } 38
 
 
-CCTK_INT ntheta[42] "Number of grid points in the theta direction" STEERABLE=always #ACCUMULATOR-BASE maxntheta
+CCTK_INT ntheta[100] "Number of grid points in the theta direction" STEERABLE=always #ACCUMULATOR-BASE maxntheta
 {
   0:* :: "must be at least 3*nghoststheta"
 } 19
 
-CCTK_INT nphi[42] "Number of grid points in the phi direction" STEERABLE=always #ACCUMULATOR-BASE maxnphi
+CCTK_INT nphi[100] "Number of grid points in the phi direction" STEERABLE=always #ACCUMULATOR-BASE maxnphi
 {
   0:* :: "must be at least 3*nghostsphi"
 } 38
 
 
 
-CCTK_INT nghoststheta[42] "Number of ghost zones in the theta direction" STEERABLE=always #ACCUMULATOR-BASE maxnghoststheta
+CCTK_INT nghoststheta[100] "Number of ghost zones in the theta direction" STEERABLE=always #ACCUMULATOR-BASE maxnghoststheta
 {
   0:* :: ""
 } 2
 
-CCTK_INT nghostsphi[42] "Number of ghost zones in the phi direction" STEERABLE=always #ACCUMULATOR-BASE maxnghostsphi
+CCTK_INT nghostsphi[100] "Number of ghost zones in the phi direction" STEERABLE=always #ACCUMULATOR-BASE maxnghostsphi
 {
   0:* :: ""
 } 2
 
 
 
-BOOLEAN symmetric_x[42] "Reflection symmetry in the x direction" STEERABLE=always
+BOOLEAN symmetric_x[100] "Reflection symmetry in the x direction" STEERABLE=always
 {
 } no
 
-BOOLEAN symmetric_y[42] "Reflection symmetry in the y direction" STEERABLE=always
+BOOLEAN symmetric_y[100] "Reflection symmetry in the y direction" STEERABLE=always
 {
 } no
 
-BOOLEAN symmetric_z[42] "Reflection symmetry in the z direction" STEERABLE=always
+BOOLEAN symmetric_z[100] "Reflection symmetry in the z direction" STEERABLE=always
 {
 } no
 
@@ -111,49 +136,49 @@ PRIVATE:
 
 # Place a surfaces at a certain location
 
-CCTK_REAL origin_x[42] "Origin for surface" STEERABLE=always
+CCTK_REAL origin_x[100] "Origin for surface" STEERABLE=always
 {
   * :: "origin"
 } 0.0
 
-CCTK_REAL origin_y[42] "Origin for surface" STEERABLE=always
+CCTK_REAL origin_y[100] "Origin for surface" STEERABLE=always
 {
   * :: "origin"
 } 0.0
 
-CCTK_REAL origin_z[42] "Origin for surface" STEERABLE=always
+CCTK_REAL origin_z[100] "Origin for surface" STEERABLE=always
 {
   * :: "origin"
 } 0.0
 
 
 
-BOOLEAN set_spherical[42] "Place surface at a certain radius" STEERABLE=always
+BOOLEAN set_spherical[100] "Place surface at a certain radius" STEERABLE=always
 {
 } no
 
-CCTK_REAL radius[42] "Radius for surface" STEERABLE=always
+CCTK_REAL radius[100] "Radius for surface" STEERABLE=always
 {
   * :: "radius"
 } 0.0
 
 
 
-BOOLEAN set_elliptic[42] "Place surface at a certain radius" STEERABLE=always
+BOOLEAN set_elliptic[100] "Place surface at a certain radius" STEERABLE=always
 {
 } no
 
-CCTK_REAL radius_x[42] "Radius for surface" STEERABLE=always
+CCTK_REAL radius_x[100] "Radius for surface" STEERABLE=always
 {
   * :: "radius"
 } 0.0
 
-CCTK_REAL radius_y[42] "Radius for surface" STEERABLE=always
+CCTK_REAL radius_y[100] "Radius for surface" STEERABLE=always
 {
   * :: "radius"
 } 0.0
 
-CCTK_REAL radius_z[42] "Radius for surface" STEERABLE=always
+CCTK_REAL radius_z[100] "Radius for surface" STEERABLE=always
 {
   * :: "radius"
 } 0.0
