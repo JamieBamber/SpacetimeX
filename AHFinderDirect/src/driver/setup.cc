@@ -579,15 +579,6 @@ extern "C"
     }
   }
   
-  
-  
-  
-  
-  
-  
-  
-  
-  
   //
   // check parameters
   //
@@ -651,15 +642,15 @@ extern "C"
 
   state.N_procs = CCTK_nProcs(cctkGH);
   state.my_proc = CCTK_MyProc(cctkGH);
-
   state.N_horizons = N_horizons;
   state.N_active_procs = 0;	// dummy value, will be set properly later
   state.merger_event_file_initialized = false;
+  state.dynamic_horizon_assignment
+   = CCTK_Equals(parallel_horizon_assignment, "dynamic");
   CCTK_VInfo(CCTK_THORNSTRING,
              "           to search for %d horizon%s on %d processor%s",
   	   state.N_horizons, ((state.N_horizons == 1) ? "" : "s"),
   	   state.N_procs, ((state.N_procs == 1) ? "" : "s"));
-
 
   //
   // Cactus grid info
@@ -931,19 +922,22 @@ extern "C"
   			   surface_interpolator_pars);		/*NOTREACHED*/
   }
 
-  // setup all horizons on this processor,
-  // with full-fledged patch systems for genuine horizons
-  // and skeletal patch systems for others
+  // Set up all horizons on this processor.  Dynamic assignment requires
+  // replicated full state so that any process can take ownership of any
+  // dependency-ready horizon without rebuilding or transferring a Jacobian.
 	  {
-	for (int hn = 1 ; hn <= hs.N_horizons() ; ++hn) {
-  	const bool genuine_flag = hs.is_hn_genuine(hn);
-  	state.AH_data_array[hn] = new AH_data;
-  	struct AH_data& AH_data = *state.AH_data_array[hn];
+	for (int hn = 1 ; hn <= hs.N_horizons() ; ++hn)
+	{
+	const bool genuine_flag = hs.is_hn_genuine(hn);
+	const bool full_flag = genuine_flag || (state.dynamic_horizon_assignment
+		 && state.my_proc < state.N_active_procs);
+	state.AH_data_array[hn] = new AH_data;
+	struct AH_data& AH_data = *state.AH_data_array[hn];
 
 	if (verbose_info.print_algorithm_highlights)
 	   then CCTK_VInfo(CCTK_THORNSTRING,
 			   "   setting up %s data structures for horizon %d",
-			   (genuine_flag ? "full-fledged" : "skeletal"),
+			   (full_flag ? "full-fledged" : "skeletal"),
 			   hn);
 
 	// decide what type of patch system this one should be
@@ -970,20 +964,20 @@ extern "C"
 			      ghost_zone_width, patch_overlap_width,
 			      N_zones_per_right_angle[hn],
 			      gfns::nominal_min_gfn,
-			      (genuine_flag ? gfns::nominal_max_gfn
-					    : gfns::skeletal_nominal_max_gfn),
+			      (full_flag ? gfns::nominal_max_gfn
+					 : gfns::skeletal_nominal_max_gfn),
 			      gfns::ghosted_min_gfn, gfns::ghosted_max_gfn,
 			      ip_interp_handle, ip_interp_param_table_handle,
 			      surface_interp_handle,
 			      surface_interp_param_table_handle,
 			      true, verbose_info.print_algorithm_details);
 	patch_system& ps = *AH_data.ps_ptr;
-	if (genuine_flag)
+	if (full_flag)
 	   then ps.set_gridfn_to_constant(0.0, gfns::gfn__zero);
-	if (genuine_flag)
+	if (full_flag)
 	   then ps.set_gridfn_to_constant(1.0, gfns::gfn__one);
 
-	AH_data.Jac_ptr = genuine_flag
+	AH_data.Jac_ptr = full_flag
 			  ? new_Jacobian(Jac_info.Jacobian_store_solve_method,
 					 ps,
 					 verbose_info.print_algorithm_details)
@@ -1051,13 +1045,14 @@ extern "C"
   	AH_data.initial_find_flag = true;
   	AH_data.really_initial_find_flag = AH_data.initial_find_flag;
 
-  	if (genuine_flag) then {
+	if (full_flag) then {
   		if (verbose_info.print_algorithm_details)
   		   then CCTK_VInfo(CCTK_THORNSTRING,
   			   "      setting initial guess parameters etc");
   		set_initial_guess_parameters(AH_data, hn, /* irrelevant here; leave at zero */0, 0, 0);
     }
 
+	AH_data.dynamic_owner_proc = -1;
   	AH_data.search_flag = false;
   	AH_data.found_flag = false;
   	AH_data.has_been_found = false;
@@ -1076,9 +1071,9 @@ extern "C"
   	AH_data.candidate_inactive_checks = 0;
 	AH_data.merger_event_written = false;
   	AH_data.h_files_written = false;
-  	AH_data.BH_diagnostics_fileptr = NULL;
+	AH_data.BH_diagnostics_fileptr = NULL;
 	}
-	}
+	  }
 
   // Initialise the centroids.  These values may later be overwritten
   // when they are recovered from a checkpoint.  However, if new

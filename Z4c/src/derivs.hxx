@@ -411,7 +411,8 @@ template <typename T>
 CCTK_ATTRIBUTE_NOINLINE void
 apply_upwind_diss(const cGH *restrict const cctkGH, const GF3D2<const T> &gf_,
                   const vec<GF3D2<const T>, dim> &gf_betaG_,
-                  const GF3D2<T> &gf_rhs_) {
+                  const GF3D2<T> &gf_rhs_,
+                  const CCTK_REAL advection_coefficient = 1.0) {
   DECLARE_CCTK_ARGUMENTS;
   DECLARE_CCTK_PARAMETERS;
 
@@ -430,7 +431,8 @@ apply_upwind_diss(const cGH *restrict const cctkGH, const GF3D2<const T> &gf_,
           const vec<vreal, dim> betaG = gf_betaG_(mask, p.I);
           const vreal rhs_old = gf_rhs_(mask, p.I);
           const vreal rhs_new =
-              rhs_old + deriv_upwind(mask, gf_, p.I, betaG, dx);
+              rhs_old + advection_coefficient *
+                            deriv_upwind(mask, gf_, p.I, betaG, dx);
           gf_rhs_.store(mask, p.I, rhs_new);
         });
 
@@ -442,9 +444,10 @@ apply_upwind_diss(const cGH *restrict const cctkGH, const GF3D2<const T> &gf_,
           const vbool mask = mask_for_loop_tail<vbool>(p.i, p.imax);
           const vec<vreal, dim> betaG = gf_betaG_(mask, p.I);
           const vreal rhs_old = gf_rhs_(mask, p.I);
-          const vreal rhs_new = rhs_old +
-                                deriv_upwind(mask, gf_, p.I, betaG, dx) +
-                                epsdiss * diss(mask, gf_, p.I, dx);
+          const vreal rhs_new =
+              rhs_old +
+              advection_coefficient * deriv_upwind(mask, gf_, p.I, betaG, dx) +
+              epsdiss * diss(mask, gf_, p.I, dx);
           gf_rhs_.store(mask, p.I, rhs_new);
         });
   }

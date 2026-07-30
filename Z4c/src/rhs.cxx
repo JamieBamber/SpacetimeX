@@ -1,3 +1,5 @@
+#include <AMReX_GpuAsyncArray.H>
+
 #include <cctk.h>
 
 #ifdef __CUDACC__
@@ -34,17 +36,21 @@ using namespace Arith;
 using namespace Loop;
 using namespace std;
 
-constexpr int max_eta_punctures = 10;
+constexpr int max_eta_sources = 100;
+
+struct PunctureEtaSource {
+  CCTK_REAL x;
+  CCTK_REAL y;
+  CCTK_REAL z;
+  CCTK_REAL mass;
+  CCTK_REAL weight;
+};
 
 struct PunctureEtaProfile {
   bool enabled = false;
   bool radial_baseline = false;
-  CCTK_INT num_punctures = 0;
-  CCTK_REAL x[max_eta_punctures] = {};
-  CCTK_REAL y[max_eta_punctures] = {};
-  CCTK_REAL z[max_eta_punctures] = {};
-  CCTK_REAL mass[max_eta_punctures] = {};
-  CCTK_REAL weight[max_eta_punctures] = {};
+  CCTK_INT num_sources = 0;
+  const PunctureEtaSource *sources = nullptr;
   CCTK_REAL eta0 = 0.0;
   CCTK_REAL reference_mass = 1.0;
   CCTK_REAL coefficient = 1.0;
@@ -92,23 +98,37 @@ puncture_tracker_eta(const PunctureEtaProfile &profile, const CCTK_REAL x,
   CCTK_REAL eta_value = baseline;
   const CCTK_REAL inv_m0_sq =
       1.0 / (profile.reference_mass * profile.reference_mass);
-  for (int n = 0; n < max_eta_punctures; ++n) {
-    if (n >= profile.num_punctures)
-      break;
+  for (int n = 0; n < profile.num_sources; ++n) {
+    const PunctureEtaSource &source = profile.sources[n];
 
-    const CCTK_REAL dx = x - profile.x[n];
-    const CCTK_REAL dy = y - profile.y[n];
-    const CCTK_REAL dz = z - profile.z[n];
+    const CCTK_REAL dx = x - source.x;
+    const CCTK_REAL dy = y - source.y;
+    const CCTK_REAL dz = z - source.z;
     const CCTK_REAL r2 = dx * dx + dy * dy + dz * dz;
     const CCTK_REAL rhat2 = r2 * inv_m0_sq;
     const CCTK_REAL denominator =
-        1.0 + profile.weight[n] * integer_power(rhat2, profile.power);
+        1.0 + source.weight * integer_power(rhat2, profile.power);
 
     eta_value += profile.coefficient *
-                 (1.0 / profile.mass[n] - baseline) / denominator;
+                 (1.0 / source.mass - baseline) / denominator;
   }
 
   return clamp_eta(eta_value, profile.eta_min, profile.eta_max);
+}
+
+ARITH_DEVICE ARITH_INLINE CCTK_REAL eta_at_point(
+    const PunctureEtaProfile &profile, const CCTK_REAL x, const CCTK_REAL y,
+    const CCTK_REAL z, const CCTK_REAL veta_width,
+    const CCTK_REAL veta_central, const CCTK_REAL veta_outer) {
+  if (!profile.enabled)
+    return radial_eta(x, y, z, veta_width, veta_central, veta_outer);
+
+  const CCTK_REAL fallback_eta =
+      profile.radial_baseline
+          ? radial_eta(x, y, z, veta_width, veta_central, veta_outer)
+          : profile.eta0;
+
+  return puncture_tracker_eta(profile, x, y, z, fallback_eta);
 }
 
 extern "C" void Z4c_RHS(CCTK_ARGUMENTS) {
@@ -116,12 +136,13 @@ extern "C" void Z4c_RHS(CCTK_ARGUMENTS) {
   DECLARE_CCTK_PARAMETERS;
 
   PunctureEtaProfile eta_profile_data;
+  array<PunctureEtaSource, max_eta_sources> eta_sources{};
   eta_profile_data.enabled =
       CCTK_EQUALS(eta_profile, "puncture_tracker") ||
       CCTK_EQUALS(eta_profile, "radial_puncture_tracker");
   eta_profile_data.radial_baseline =
       CCTK_EQUALS(eta_profile, "radial_puncture_tracker");
-  eta_profile_data.num_punctures = 0;
+  eta_profile_data.num_sources = 0;
   eta_profile_data.eta0 = eta;
   eta_profile_data.reference_mass = eta_reference_mass;
   eta_profile_data.coefficient = eta_profile_coefficient;
@@ -136,21 +157,22 @@ extern "C" void Z4c_RHS(CCTK_ARGUMENTS) {
 
   if (eta_profile_data.enabled) {
     const auto pt_num_tracked_ptr = static_cast<const CCTK_INT *>(
-        CCTK_VarDataPtr(cctkGH, 0, "PunctureTracker::pt_num_tracked"));
+        CCTK_VarDataPtr(cctkGH, 0, "PunctureTracker::pt_num_tracked[0]"));
     const auto pt_num_groups_ptr = static_cast<const CCTK_INT *>(
-        CCTK_VarDataPtr(cctkGH, 0, "PunctureTracker::pt_num_groups"));
+        CCTK_VarDataPtr(cctkGH, 0, "PunctureTracker::pt_num_groups[0]"));
     const auto pt_mass_ptr = static_cast<const CCTK_REAL *>(
-        CCTK_VarDataPtr(cctkGH, 0, "PunctureTracker::pt_mass"));
+        CCTK_VarDataPtr(cctkGH, 0, "PunctureTracker::pt_mass[0]"));
     const auto pt_group_x_ptr = static_cast<const CCTK_REAL *>(
-        CCTK_VarDataPtr(cctkGH, 0, "PunctureTracker::pt_group_x"));
+        CCTK_VarDataPtr(cctkGH, 0, "PunctureTracker::pt_group_x[0]"));
     const auto pt_group_y_ptr = static_cast<const CCTK_REAL *>(
-        CCTK_VarDataPtr(cctkGH, 0, "PunctureTracker::pt_group_y"));
+        CCTK_VarDataPtr(cctkGH, 0, "PunctureTracker::pt_group_y[0]"));
     const auto pt_group_z_ptr = static_cast<const CCTK_REAL *>(
-        CCTK_VarDataPtr(cctkGH, 0, "PunctureTracker::pt_group_z"));
+        CCTK_VarDataPtr(cctkGH, 0, "PunctureTracker::pt_group_z[0]"));
     const auto pt_group_mass_ptr = static_cast<const CCTK_REAL *>(
-        CCTK_VarDataPtr(cctkGH, 0, "PunctureTracker::pt_group_mass"));
+        CCTK_VarDataPtr(cctkGH, 0, "PunctureTracker::pt_group_mass[0]"));
     const auto pt_group_eta_weight_ptr = static_cast<const CCTK_REAL *>(
-        CCTK_VarDataPtr(cctkGH, 0, "PunctureTracker::pt_group_eta_weight"));
+        CCTK_VarDataPtr(cctkGH, 0,
+                        "PunctureTracker::pt_group_eta_weight[0]"));
 
     if (!pt_num_tracked_ptr || !pt_num_groups_ptr || !pt_mass_ptr ||
         !pt_group_x_ptr || !pt_group_y_ptr || !pt_group_z_ptr ||
@@ -164,10 +186,10 @@ extern "C" void Z4c_RHS(CCTK_ARGUMENTS) {
 
     const CCTK_INT num_tracked = pt_num_tracked_ptr[0];
     const CCTK_INT num_groups = pt_num_groups_ptr[0];
-    if (num_tracked <= 0 || num_tracked > max_eta_punctures)
+    if (num_tracked <= 0 || num_tracked > max_eta_sources)
       CCTK_VERROR("PunctureTracker::pt_num_tracked=%d is invalid",
                   int(num_tracked));
-    if (num_groups <= 0 || num_groups > max_eta_punctures)
+    if (num_groups <= 0 || num_groups > max_eta_sources)
       CCTK_VERROR("PunctureTracker::pt_num_groups=%d is invalid",
                   int(num_groups));
 
@@ -190,36 +212,36 @@ extern "C" void Z4c_RHS(CCTK_ARGUMENTS) {
       CCTK_VERROR("eta_reference_mass=%g must be positive when specified",
                   double(eta_profile_data.reference_mass));
 
-    eta_profile_data.num_punctures = num_groups;
-    for (int n = 0; n < eta_profile_data.num_punctures; ++n) {
-      eta_profile_data.x[n] = pt_group_x_ptr[n];
-      eta_profile_data.y[n] = pt_group_y_ptr[n];
-      eta_profile_data.z[n] = pt_group_z_ptr[n];
-      eta_profile_data.mass[n] = pt_group_mass_ptr[n];
-      eta_profile_data.weight[n] = pt_group_eta_weight_ptr[n];
+    eta_profile_data.num_sources = num_groups;
+    for (int n = 0; n < eta_profile_data.num_sources; ++n) {
+      PunctureEtaSource &source = eta_sources[n];
+      source.x = pt_group_x_ptr[n];
+      source.y = pt_group_y_ptr[n];
+      source.z = pt_group_z_ptr[n];
+      source.mass = pt_group_mass_ptr[n];
+      source.weight = pt_group_eta_weight_ptr[n];
 
-      if (!isfinite(eta_profile_data.x[n]) ||
-          !isfinite(eta_profile_data.y[n]) ||
-          !isfinite(eta_profile_data.z[n]))
+      if (!isfinite(source.x) || !isfinite(source.y) ||
+          !isfinite(source.z))
         CCTK_VERROR("PunctureTracker grouped source %d is not finite: "
                     "(%g,%g,%g)",
-                    n, double(eta_profile_data.x[n]),
-                    double(eta_profile_data.y[n]),
-                    double(eta_profile_data.z[n]));
+                    n, double(source.x), double(source.y), double(source.z));
 
-      if (!isfinite(eta_profile_data.mass[n]) ||
-          eta_profile_data.mass[n] <= 0.0)
+      if (!isfinite(source.mass) || source.mass <= 0.0)
         CCTK_VERROR("PunctureTracker::pt_group_mass[%d]=%g must be positive "
                     "and finite",
-                    n, double(eta_profile_data.mass[n]));
+                    n, double(source.mass));
 
-      if (!isfinite(eta_profile_data.weight[n]) ||
-          eta_profile_data.weight[n] < 0.0)
+      if (!isfinite(source.weight) || source.weight < 0.0)
         CCTK_VERROR("PunctureTracker::pt_group_eta_weight[%d]=%g must be "
                     "non-negative and finite",
-                    n, double(eta_profile_data.weight[n]));
+                    n, double(source.weight));
     }
   }
+
+  amrex::Gpu::AsyncArray<PunctureEtaSource> eta_source_storage(
+      eta_sources.data(), eta_profile_data.num_sources);
+  eta_profile_data.sources = eta_source_storage.data();
 
   for (int d = 0; d < 3; ++d)
     if (cctk_nghostzones[d] < deriv_order / 2 + 1)
@@ -408,15 +430,20 @@ extern "C" void Z4c_RHS(CCTK_ARGUMENTS) {
           const vbool mask = mask_for_loop_tail<vbool>(p.i, p.imax);
           const GF3D2index index1(layout1, p.I);
           const GF3D5index index0(layout0, p.I);
+          const vreal alphaG_value = gf_alphaG0(mask, index0);
+          const vreal lapse =
+              fmax(vreal(alphaG_floor), vreal(1) + alphaG_value);
+          const vreal kappa1_local =
+              covariant_z4_damping ? vreal(kappa1) / lapse : vreal(kappa1);
 
           const CCTK_REAL eta_local =
-              puncture_tracker_eta(eta_profile_data, p.x, p.y, p.z,
-                                   radial_eta(p.x, p.y, p.z, veta_width,
-                                              veta_central, veta_outer));
+              eta_at_point(eta_profile_data, p.x, p.y, p.z, veta_width,
+                           veta_central, veta_outer);
 
           // Load and calculate
           const z4c_vars<vreal> vars(
-              set_Theta_zero, kappa1, kappa2, f_mu_L, f_mu_S, eta_local, //
+              set_Theta_zero, kappa1_local, kappa2, f_mu_L, f_mu_S,
+              eta_local, //
               gf_chi0(mask, index0), gf_dchi0(mask, index0),
               gf_ddchi0(mask, index0), //
               gf_gammat0(mask, index0), gf_dgammat0(mask, index0),
@@ -425,7 +452,7 @@ extern "C" void Z4c_RHS(CCTK_ARGUMENTS) {
               gf_At0(mask, index0), gf_dAt0(mask, index0),       //
               gf_Gamt0(mask, index0), gf_dGamt0(mask, index0),   //
               gf_Theta0(mask, index0), gf_dTheta0(mask, index0), //
-              gf_alphaG0(mask, index0), gf_dalphaG0(mask, index0),
+              alphaG_value, gf_dalphaG0(mask, index0),
               gf_ddalphaG0(mask, index0), //
               gf_betaG0(mask, index0), gf_dbetaG0(mask, index0),
               gf_ddbetaG0(mask, index0), //
@@ -539,10 +566,12 @@ extern "C" void Z4c_RHS(CCTK_ARGUMENTS) {
   if (!set_Theta_zero)
     apply_upwind_diss(cctkGH, gf_Theta1, gf_betaG1, gf_Theta_rhs1);
 
-  apply_upwind_diss(cctkGH, gf_alphaG1, gf_betaG1, gf_alphaG_rhs1);
+  apply_upwind_diss(cctkGH, gf_alphaG1, gf_betaG1, gf_alphaG_rhs1,
+                    lapse_advection_coefficient);
 
   for (int a = 0; a < 3; ++a)
-    apply_upwind_diss(cctkGH, gf_betaG1(a), gf_betaG1, gf_betaG_rhs1(a));
+    apply_upwind_diss(cctkGH, gf_betaG1(a), gf_betaG1, gf_betaG_rhs1(a),
+                      shift_advection_coefficient);
 }
 
 extern "C" void Z4c_Sync(CCTK_ARGUMENTS) {

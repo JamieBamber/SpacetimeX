@@ -55,11 +55,27 @@ Each processor is assigned the dummy horizon, and zero or more genuine
 horizons; each genuine horizon is assigned to exactly one procesor.
 A processor with one or more genuine horizons is called an "active"
 processor; a processor with only the dummy horizon is called a "dummy"
-processor.  The assignment of horizons to processors is static for the
-whole Cactus run.
-	[A dynamic assignment might be more efficient,
-	but then we'd have to move our state for a horizon
-	from one processor to processor.]
+processor.  By default, the assignment of horizons to processors is static
+for the whole Cactus run.
+
+If parallel_horizon_assignment="dynamic", each active processor receives the
+next dependency-ready horizon whenever it finishes its current one during the
+first search.  This learns a balanced queue for each processor.  Later searches
+reuse those queues so the tracked surface and Newton state remain on the same
+processor.  A newly enabled horizon without an owner is assigned to the next
+idle processor.  A dependent horizon becomes ready only after its searched-for
+parent has completed successfully.
+
+Full horizon state is replicated on all active processors in dynamic mode, and
+successful diagnostics and horizon shapes are broadcast before another
+horizon is assigned.  The learned owner map is process-local setup state: after
+a restart it is rebuilt, so restarting with a different process count remains
+supported.
+
+Dynamic assignment uses more memory than static assignment because every
+processor needs a full patch system and Jacobian for every horizon it might
+receive.  It is intended for runs with many independent horizons whose solve
+times differ substantially.  Pretracking retains the static assignment.
 
 All the processors do their Newton iteration synchronously, working on
 genuine horizons if they have any, or dummy horizons if not.  If any
@@ -136,6 +152,17 @@ of these flags, with the result broadcast to all processors.  Each
 processor then uses the inclusive-or-reduction result to determine
 whether or not to continue iterating.
 
+In dynamic mode, the same status exchange includes an explicit
+"finished this horizon" flag.  Every processor applies the same deterministic
+scheduling update to the gathered status, so no separate scheduler processor
+or point-to-point control messages are needed.
+
+The geometry interpolation remains one collective call per Newton phase.
+Each active processor contributes the interpolation coordinates for its
+current horizon, so the collective already batches independent horizon point
+clouds across processors.  The subsequent Jacobian solves are local and run
+concurrently on their owning processors.
+
 
 Broadcasting the Iteration Status
 ---------------------------------
@@ -185,6 +212,7 @@ After each Theta evaluation each active processor broadcasts
 * the expansion() status
 * its error norms
 * a Boolean "I have just found a horizon" flag
+* a Boolean "I have finished this horizon" flag
 * a Boolean "I need more iterations" flag
 to all processors.  All processors do the inclusive-or--reduce of
 the "I need more iterations" flags locally, on the values received

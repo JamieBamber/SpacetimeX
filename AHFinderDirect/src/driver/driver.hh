@@ -257,6 +257,8 @@ struct	iteration_status_buffers
 	fp* mean_horizon_radius_buffer;
 	fp* Theta_infinity_norm_buffer;
 	bool* found_horizon_buffer;
+	bool* finished_horizon_buffer;
+	bool* needs_more_iterations_buffer;
 
 	// --> low-level buffers for CCTK_Reduce()
 	// ... broadcast_status() [in Newton.c] sets these to point to
@@ -270,6 +272,8 @@ struct	iteration_status_buffers
 		  mean_horizon_radius_buffer(NULL),
 		  Theta_infinity_norm_buffer(NULL),
 		  found_horizon_buffer(NULL),
+		  finished_horizon_buffer(NULL),
+		  needs_more_iterations_buffer(NULL),
 		  send_buffer_ptr(NULL), receive_buffer_ptr(NULL)
 		{ }
 	};
@@ -300,6 +304,10 @@ struct	horizon_buffers
 //
 struct	AH_data
 	{
+	// In dynamic mode the first search learns a balanced owner.  Keeping that
+	// owner on later calls preserves rank-local Newton and surface state.
+	int dynamic_owner_proc;
+
 	//
 	// Any given horizon is allocated to a single processor.
 	// On that processor (where we actually find the horizon)
@@ -393,7 +401,7 @@ struct	state
 					// (the active processors are processor
 					//  numbers 0 to N_active_procs-1)
 	bool merger_event_file_initialized;
-
+	bool dynamic_horizon_assignment;
 	struct cactus_grid_info cgi;
 	struct geometry_info gi;
 	struct Jacobian_info Jac_info;
@@ -493,6 +501,7 @@ void set_initial_guess_parameters(struct AH_data& AH_data, const int hn,
 // returns true for success, false for failure to converge
 void Newton(const cGH* GH,
 	    int N_procs, int N_active_procs, int my_proc,
+	    bool dynamic_horizon_assignment,
 	    horizon_sequence& hs, struct AH_data* const AH_data_array[],
 	    const struct cactus_grid_info& cgi,
 	    const struct geometry_info& gi,

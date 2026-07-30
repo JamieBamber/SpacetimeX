@@ -37,6 +37,11 @@ SCHEDULE GROUP Z4c_InitialGroup AT initial AFTER ADMBaseX_PostInitial
 {
 } "Convert ADM to Z4c variables"
 
+SCHEDULE GROUP Z4c_InitialGroup AT postrestrictinitial
+  AFTER ADMBaseX_PostInitialHierarchy
+{
+} "Rebuild Z4c variables from final hierarchy-wide ADM initial data"
+
 SCHEDULE GROUP Z4c_PostStepGroup AT initial AFTER Z4c_InitialGroup BEFORE ADMBaseX_SetADMVars
 {
 } "Post-process Z4c variables"

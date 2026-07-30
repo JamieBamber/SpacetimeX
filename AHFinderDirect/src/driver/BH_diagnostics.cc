@@ -120,7 +120,7 @@ buffer[posn__quadrupole_xx] = quadrupole_xx;
 buffer[posn__quadrupole_xy] = quadrupole_xy;
 buffer[posn__quadrupole_xz] = quadrupole_xz;
 buffer[posn__quadrupole_yy] = quadrupole_yy;
-buffer[posn__quadrupole_xz] = quadrupole_yz;
+buffer[posn__quadrupole_yz] = quadrupole_yz;
 buffer[posn__quadrupole_zz] = quadrupole_zz;
 
 buffer[posn__min_radius]  = min_radius;

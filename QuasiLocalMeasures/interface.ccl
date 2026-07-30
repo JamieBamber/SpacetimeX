@@ -193,6 +193,12 @@ REAL qlm_scalars[num_surfaces] TYPE=scalar TAGS='Checkpoint="no"'
   qlm_adm_energy
   qlm_adm_momentum_x qlm_adm_momentum_y qlm_adm_momentum_z
   qlm_adm_angular_momentum_x qlm_adm_angular_momentum_y qlm_adm_angular_momentum_z
+  # Finite-radius ADM diagnostics using conformal coordinate-surface fluxes
+  qlm_conformal_adm_energy
+  qlm_conformal_adm_momentum_x qlm_conformal_adm_momentum_y qlm_conformal_adm_momentum_z
+  qlm_conformal_adm_angular_momentum_x qlm_conformal_adm_angular_momentum_y qlm_conformal_adm_angular_momentum_z
+  # Covariant quasi-local linear momentum on the physical surface
+  qlm_quasilocal_momentum_covariant_x qlm_quasilocal_momentum_covariant_y qlm_quasilocal_momentum_covariant_z
   qlm_w_energy
   qlm_w_momentum_x qlm_w_momentum_y qlm_w_momentum_z
   qlm_w_angular_momentum_x qlm_w_angular_momentum_y qlm_w_angular_momentum_z

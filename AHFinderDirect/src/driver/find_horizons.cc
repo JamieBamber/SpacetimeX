@@ -892,8 +892,25 @@ if (state.timer_handle >= 0)
 
 const int my_proc = state.my_proc;
 horizon_sequence& hs = *state.my_hs;
-const bool active_flag = hs.has_genuine_horizons();
 const bool broadcast_horizon_shape = true;
+bool dynamic_horizon_assignment = state.dynamic_horizon_assignment;
+if (dynamic_horizon_assignment)
+   then {
+	for (int hn = 1 ; hn <= N_horizons ; ++hn)
+	  if (state.AH_data_array[hn]->search_flag
+	      && state.AH_data_array[hn]->use_pretracking)
+	     then {
+		  dynamic_horizon_assignment = false;
+		  if (my_proc == 0 && cctk_iteration == 0)
+		     then CCTK_VWarn(1, __LINE__, __FILE__, CCTK_THORNSTRING,
+			     "dynamic horizon assignment does not support "
+			     "pretracking; using static assignment");
+		  break;
+		  }
+	}
+const bool active_flag = dynamic_horizon_assignment
+			 ? my_proc < state.N_active_procs
+			 : hs.has_genuine_horizons();
 
       struct cactus_grid_info&          cgi = state.cgi;
 const struct    geometry_info&           gi = state.gi;
@@ -979,6 +996,8 @@ if (state.method == method__find_horizons)
 // i.e. for any (genuine) horizons where we didn't find the horizon previously
 	for (int hn = hs.init_hn() ; hs.is_genuine() ; hn = hs.next_hn())
 	{
+	if (!dynamic_horizon_assignment && !hs.is_hn_genuine(hn))
+	   then continue;
 	assert( state.AH_data_array[hn] != NULL );
 	struct AH_data& AH_data = *state.AH_data_array[hn];
 	if (!AH_data.search_flag)
@@ -1011,7 +1030,8 @@ if (state.method == method__find_horizons)
         		          	    AH_data.initial_guess_info,
         				    IO_info,
         				    hn, N_horizons, verbose_info);
-        		if (active_flag && IO_info.output_initial_guess)
+		if (active_flag && IO_info.output_initial_guess
+			    && (!dynamic_horizon_assignment || my_proc == 0))
         		   then output_gridfn(ps, gfns::gfn__h,
                                               "h", cgi.GH,
         				      IO_info, IO_info.h_base_file_name,
@@ -1051,6 +1071,7 @@ case method__find_horizons:
 	   then CCTK_TimerStartI(state.timer_handle);
 	Newton(cctkGH,
 	       state.N_procs, state.N_active_procs, my_proc,
+	       dynamic_horizon_assignment,
 	       *state.my_hs, state.AH_data_array,
 	       cgi, gi, Jac_info, state.solver_info,
 	       IO_info, state.BH_diagnostics_info, broadcast_horizon_shape,

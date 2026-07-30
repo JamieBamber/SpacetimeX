@@ -27,6 +27,10 @@ CCTK_REAL kappa2 "kappa2" STEERABLE=always
   *:* :: ""
 } 0.0
 
+BOOLEAN covariant_z4_damping "Rescale kappa1 by the inverse lapse so that lapse*kappa1 remains constant" STEERABLE=always
+{
+} no
+
 CCTK_REAL f_mu_L "mu_L = f_mu_L / alpha" STEERABLE=always
 {
   *:* :: ""
@@ -41,6 +45,16 @@ CCTK_REAL eta "eta" STEERABLE=always
 {
   *:* :: ""
 } 2.0
+
+CCTK_REAL lapse_advection_coefficient "Coefficient multiplying shift advection of the lapse" STEERABLE=always
+{
+  *:* :: "Any finite coefficient"
+} 1.0
+
+CCTK_REAL shift_advection_coefficient "Coefficient multiplying shift self-advection" STEERABLE=always
+{
+  *:* :: "Any finite coefficient"
+} 1.0
 
 CCTK_REAL veta_width "" STEERABLE=always
 {

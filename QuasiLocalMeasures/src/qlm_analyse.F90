@@ -19,7 +19,7 @@ subroutine qlm_analyse (CCTK_ARGUMENTS, hn)
   DECLARE_CCTK_PARAMETERS
   integer :: hn
   
-  CCTK_REAL, parameter :: zero=0, two=2
+  CCTK_REAL, parameter :: zero=0, one=1, two=2, three=3
   integer,   parameter :: rk = kind(zero)
   
   CCTK_REAL    :: theta, phi
@@ -35,6 +35,14 @@ subroutine qlm_analyse (CCTK_ARGUMENTS, hn)
   CCTK_REAL    :: xi(2), xi1(3)
   CCTK_REAL    :: qq(2,2), dtq
   CCTK_REAL    :: adm_energy, adm_mom(3), adm_amom(3)
+  CCTK_REAL    :: conformal_adm_energy, conformal_adm_mom(3)
+  CCTK_REAL    :: conformal_adm_amom(3), quasilocal_mom_covariant(3)
+  CCTK_REAL    :: chi_raw, chi, dchi(3)
+  CCTK_REAL    :: hu(3,3), dh(3,3,3)
+  CCTK_REAL    :: christoffel, contracted_christoffel(3)
+  CCTK_REAL    :: conformal_dchi(3), mass_flux(3)
+  CCTK_REAL    :: atilde_ul(3,3), coordinate_surface_element(3)
+  CCTK_REAL    :: xrel(3), trace_derivative
   CCTK_REAL    :: w_energy, w_mom(3), w_amom(3,3)
   CCTK_COMPLEX :: ev
   CCTK_REAL    :: spin
@@ -98,6 +106,17 @@ subroutine qlm_analyse (CCTK_ARGUMENTS, hn)
   qlm_adm_angular_momentum_x(hn) = 0
   qlm_adm_angular_momentum_y(hn) = 0
   qlm_adm_angular_momentum_z(hn) = 0
+
+  qlm_conformal_adm_energy(hn) = 0
+  qlm_conformal_adm_momentum_x(hn) = 0
+  qlm_conformal_adm_momentum_y(hn) = 0
+  qlm_conformal_adm_momentum_z(hn) = 0
+  qlm_conformal_adm_angular_momentum_x(hn) = 0
+  qlm_conformal_adm_angular_momentum_y(hn) = 0
+  qlm_conformal_adm_angular_momentum_z(hn) = 0
+  qlm_quasilocal_momentum_covariant_x(hn) = 0
+  qlm_quasilocal_momentum_covariant_y(hn) = 0
+  qlm_quasilocal_momentum_covariant_z(hn) = 0
 
   qlm_w_energy(hn) = 0
   qlm_w_momentum_x(hn) = 0
@@ -412,6 +431,144 @@ subroutine qlm_analyse (CCTK_ARGUMENTS, hn)
         qlm_adm_angular_momentum_z(hn) = qlm_adm_angular_momentum_z(hn) &
              & + adm_amom(3) / (8*pi) &
              &   * sqrt(dtq) * weights(i)
+
+        ! Finite-radius ADM quantities from conformal fluxes through a
+        ! coordinate surface. These are distinct from the physical-normal,
+        ! physical-area diagnostics above.
+        chi_raw = dtg**(-one/three)
+        chi = max(chi_raw, 1.0e-4_rk)
+
+        hu(:,:) = gu(:,:) / chi_raw
+
+        do c=1,3
+           trace_derivative = 0
+           do a=1,3
+              do b=1,3
+                 trace_derivative = trace_derivative + gu(a,b) * dgg(a,b,c)
+              end do
+           end do
+           dchi(c) = -chi_raw * trace_derivative / three
+
+           do a=1,3
+              do b=1,3
+                 dh(a,b,c) = dchi(c) * gg(a,b) + chi_raw * dgg(a,b,c)
+              end do
+           end do
+        end do
+
+        contracted_christoffel(:) = 0
+        do a=1,3
+           do b=1,3
+              do c=1,3
+                 christoffel = 0
+                 do l=1,3
+                    christoffel = christoffel + 0.5_rk * hu(a,l) * &
+                         (dh(l,c,b) + dh(l,b,c) - dh(b,c,l))
+                 end do
+                 contracted_christoffel(a) = contracted_christoffel(a) + &
+                      hu(b,c) * christoffel
+              end do
+           end do
+        end do
+
+        conformal_dchi(:) = 0
+        do a=1,3
+           do b=1,3
+              conformal_dchi(a) = conformal_dchi(a) + hu(a,b) * dchi(b)
+           end do
+           mass_flux(a) = chi**(-0.5_rk) * &
+                (contracted_christoffel(a) + two / chi * conformal_dchi(a)) &
+                / (16*pi)
+        end do
+
+        ! Covariant coordinate surface element e_theta cross e_phi.  It
+        ! includes the coordinate area Jacobian, so only the angular
+        ! quadrature weight is applied below.
+        coordinate_surface_element(1) = ee(2,1) * ee(3,2) - ee(3,1) * ee(2,2)
+        coordinate_surface_element(2) = ee(3,1) * ee(1,2) - ee(1,1) * ee(3,2)
+        coordinate_surface_element(3) = ee(1,1) * ee(2,2) - ee(2,1) * ee(1,2)
+
+        conformal_adm_energy = 0
+        do a=1,3
+           conformal_adm_energy = conformal_adm_energy + &
+                mass_flux(a) * coordinate_surface_element(a)
+        end do
+        qlm_conformal_adm_energy(hn) = qlm_conformal_adm_energy(hn) + &
+             conformal_adm_energy * weights(i)
+
+        do a=1,3
+           do b=1,3
+              atilde_ul(a,b) = 0
+              do c=1,3
+                 atilde_ul(a,b) = atilde_ul(a,b) + gu(a,c) * kk(c,b)
+              end do
+              atilde_ul(a,b) = atilde_ul(a,b) - delta3(a,b) * trk / three
+           end do
+        end do
+
+        conformal_adm_mom(:) = 0
+        do a=1,3
+           do b=1,3
+              conformal_adm_mom(a) = conformal_adm_mom(a) + chi**(-1.5_rk) * &
+                   (atilde_ul(b,a) - two / three * delta3(b,a) * trk) * &
+                   coordinate_surface_element(b) / (8*pi)
+           end do
+        end do
+        qlm_conformal_adm_momentum_x(hn) = &
+             qlm_conformal_adm_momentum_x(hn) + &
+             conformal_adm_mom(1) * weights(i)
+        qlm_conformal_adm_momentum_y(hn) = &
+             qlm_conformal_adm_momentum_y(hn) + &
+             conformal_adm_mom(2) * weights(i)
+        qlm_conformal_adm_momentum_z(hn) = &
+             qlm_conformal_adm_momentum_z(hn) + &
+             conformal_adm_mom(3) * weights(i)
+
+        xrel(:) = xx(:)
+        xrel(1) = xrel(1) - qlm_origin_x(hn)
+        xrel(2) = xrel(2) - qlm_origin_y(hn)
+        xrel(3) = xrel(3) - qlm_origin_z(hn)
+        conformal_adm_amom(:) = 0
+        do a=1,3
+           do b=1,3
+              do c=1,3
+                 do l=1,3
+                    conformal_adm_amom(a) = conformal_adm_amom(a) + &
+                         chi**(-1.5_rk) * &
+                         epsilon3(a,c,l) * xrel(c) * atilde_ul(b,l) * &
+                         coordinate_surface_element(b) / (8*pi)
+                 end do
+              end do
+           end do
+        end do
+        qlm_conformal_adm_angular_momentum_x(hn) = &
+             qlm_conformal_adm_angular_momentum_x(hn) + &
+             conformal_adm_amom(1) * weights(i)
+        qlm_conformal_adm_angular_momentum_y(hn) = &
+             qlm_conformal_adm_angular_momentum_y(hn) + &
+             conformal_adm_amom(2) * weights(i)
+        qlm_conformal_adm_angular_momentum_z(hn) = &
+             qlm_conformal_adm_angular_momentum_z(hn) + &
+             conformal_adm_amom(3) * weights(i)
+
+        ! Coordinate covariant quasi-local momentum components, using the
+        ! physical unit normal and physical surface area.
+        quasilocal_mom_covariant(:) = 0
+        do a=1,3
+           do b=1,3
+              quasilocal_mom_covariant(a) = quasilocal_mom_covariant(a) + &
+                   (kk(a,b) - gg(a,b) * trk) * ss(b) / (8*pi)
+           end do
+        end do
+        qlm_quasilocal_momentum_covariant_x(hn) = &
+             qlm_quasilocal_momentum_covariant_x(hn) + &
+             quasilocal_mom_covariant(1) * sqrt(dtq) * weights(i)
+        qlm_quasilocal_momentum_covariant_y(hn) = &
+             qlm_quasilocal_momentum_covariant_y(hn) + &
+             quasilocal_mom_covariant(2) * sqrt(dtq) * weights(i)
+        qlm_quasilocal_momentum_covariant_z(hn) = &
+             qlm_quasilocal_momentum_covariant_z(hn) + &
+             quasilocal_mom_covariant(3) * sqrt(dtq) * weights(i)
 
         ! Weinberg pseudotensor quantities
         ! Weinberg, chapter 7.6, pp. 165 ff, eqns. (7.6.22) - (7.6.24):

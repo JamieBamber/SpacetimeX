@@ -19,6 +19,7 @@
 #include <math.h>
 #include <string.h>
 #include <mpi.h>
+#include <vector>
 
 #include "util_Table.h"
 #include "cctk.h"
@@ -68,7 +69,8 @@ bool broadcast_status(const cGH* GH,
 		      int hn, int iteration,
 		      enum expansion_status expansion_status,
 		      fp mean_horizon_radius, fp infinity_norm,
-		      bool found_this_horizon, bool I_need_more_iterations,
+		      bool found_this_horizon, bool finished_this_horizon,
+		      bool I_need_more_iterations,
 		      struct iteration_status_buffers& isb);
 void broadcast_horizon_data(const cGH* GH,
 			    bool broadcast_flag, bool broadcast_horizon_shape,
@@ -82,6 +84,164 @@ void print_status(int N_active_procs,
 void Newton_step(patch_system& ps,
 		 fp mean_horizon_radius, fp max_allowable_Delta_h_over_h,
 		 const struct verbose_info& verbose_info);
+
+class dynamic_horizon_scheduler
+{
+private:
+	enum task_state
+	{
+	task_inactive,
+	task_pending,
+	task_running,
+	task_complete
+	};
+
+	int N_horizons_;
+	int N_active_procs_;
+	struct AH_data* const* AH_data_array_;
+	std::vector<task_state> task_states_;
+	std::vector<int> owners_;
+	std::vector<int> horizons_;
+
+	int ready_horizon_for_proc(int proc, bool retain_owner) const
+	{
+	for (int hn = 1 ; hn <= N_horizons_ ; ++hn)
+	  {
+	  if (task_states_[hn] != task_pending || !dependency_is_ready(hn))
+	     then continue;
+	  const int owner = AH_data_array_[hn]->dynamic_owner_proc;
+	  if ((retain_owner && owner == proc)
+	      || (!retain_owner && owner < 0))
+	     then return hn;
+	  }
+	return 0;
+	}
+
+	void assign_horizon(int proc, int hn, bool print_assignments)
+	{
+	assert( proc >= 0 && proc < N_active_procs_ );
+	assert( hn > 0 && hn <= N_horizons_ );
+	assert( horizons_[proc] == 0 );
+	assert( task_states_[hn] == task_pending );
+	task_states_[hn] = task_running;
+	owners_[hn] = proc;
+	horizons_[proc] = hn;
+	const bool learning_owner = AH_data_array_[hn]->dynamic_owner_proc < 0;
+	if (learning_owner)
+	   then AH_data_array_[hn]->dynamic_owner_proc = proc;
+	if (print_assignments)
+	   then CCTK_VInfo(CCTK_THORNSTRING,
+		   "   dynamically assigning horizon %d to processor #%d%s",
+			   hn, proc,
+			   (learning_owner
+			    ? " (learning owner)" : " (retained owner)"));
+	}
+
+	bool dependency_is_ready(int hn) const
+	{
+	const int dependency = AH_data_array_[hn]->depends_on;
+	return dependency == 0
+	    || !AH_data_array_[dependency]->search_flag
+	    || (task_states_[dependency] == task_complete
+		&& AH_data_array_[dependency]->found_flag);
+	}
+
+	void resolve_failed_dependencies(bool print_assignments)
+	{
+	bool changed;
+	do
+	  {
+	  changed = false;
+	  for (int hn = 1 ; hn <= N_horizons_ ; ++hn)
+	    {
+	    if (task_states_[hn] != task_pending)
+	       then continue;
+	    const int dependency = AH_data_array_[hn]->depends_on;
+	    if (dependency == 0 || !AH_data_array_[dependency]->search_flag)
+	       then continue;
+	    if (task_states_[dependency] == task_complete
+		&& !AH_data_array_[dependency]->found_flag)
+	       then {
+		    task_states_[hn] = task_complete;
+		    AH_data_array_[hn]->found_flag = false;
+		    changed = true;
+		    if (print_assignments)
+		       then CCTK_VWarn(1, __LINE__, __FILE__, CCTK_THORNSTRING,
+			       "skipping horizon %d because dependency %d was not found",
+				       hn, dependency);
+		    }
+	    }
+	  }
+	while (changed);
+	}
+
+	void assign_ready_horizons(bool print_assignments)
+	{
+	resolve_failed_dependencies(print_assignments);
+	for (int proc = 0 ; proc < N_active_procs_ ; ++proc)
+	  {
+	  if (horizons_[proc] != 0)
+	     then continue;
+	  int hn = ready_horizon_for_proc(proc, true);
+	  if (hn == 0)
+	     then hn = ready_horizon_for_proc(proc, false);
+	  if (hn > 0)
+	     then assign_horizon(proc, hn, print_assignments);
+	  }
+	}
+
+public:
+	dynamic_horizon_scheduler(int N_horizons, int N_active_procs,
+				  struct AH_data* const AH_data_array[],
+				  bool print_assignments)
+		: N_horizons_(N_horizons),
+		  N_active_procs_(N_active_procs),
+		  AH_data_array_(AH_data_array),
+		  task_states_(N_horizons + 1, task_inactive),
+		  owners_(N_horizons + 1, -1),
+		  horizons_(N_active_procs, 0)
+	{
+	for (int hn = 1 ; hn <= N_horizons_ ; ++hn)
+	  {
+	  if (AH_data_array_[hn]->dynamic_owner_proc >= N_active_procs_)
+	     then AH_data_array_[hn]->dynamic_owner_proc = -1;
+	  if (AH_data_array_[hn]->search_flag)
+	     then task_states_[hn] = task_pending;
+	  }
+	assign_ready_horizons(print_assignments);
+	}
+
+	int horizon_for_proc(int proc) const
+	{
+	return proc >= 0 && proc < N_active_procs_ ? horizons_[proc] : 0;
+	}
+
+	bool has_pending_horizons() const
+	{
+	for (int hn = 1 ; hn <= N_horizons_ ; ++hn)
+	  if (task_states_[hn] == task_pending)
+	     then return true;
+	return false;
+	}
+
+	void complete_and_reassign(const struct iteration_status_buffers& isb,
+				   bool print_assignments)
+	{
+	for (int proc = 0 ; proc < N_active_procs_ ; ++proc)
+	  {
+	  if (!isb.finished_horizon_buffer[proc])
+	     then continue;
+	  const int hn = isb.hn_buffer[proc];
+	  assert( hn > 0 );
+	  assert( horizons_[proc] == hn );
+	  assert( owners_[hn] == proc );
+	  task_states_[hn] = task_complete;
+	  owners_[hn] = -1;
+	  horizons_[proc] = 0;
+	  }
+	assign_ready_horizons(print_assignments);
+	}
+};
 	  }
 
 void track_origin(const cGH* const cctkGH, patch_system& ps, 
@@ -143,6 +303,7 @@ if (AH_data_ptr->depends_on == 0) {
 //
 void Newton(const cGH* GH,
 	    int N_procs, int N_active_procs, int my_proc,
+	    bool dynamic_horizon_assignment,
 	    horizon_sequence& hs, struct AH_data* const AH_data_array[],
 	    const struct cactus_grid_info& cgi,
 	    const struct geometry_info& gi,
@@ -159,10 +320,29 @@ cGH const * const cctkGH = GH;
 DECLARE_CCTK_ARGUMENTS;
 DECLARE_CCTK_PARAMETERS;
 
-const bool my_active_flag = hs.has_genuine_horizons();
+const bool my_active_flag = dynamic_horizon_assignment
+			    ? my_proc < N_active_procs
+			    : hs.has_genuine_horizons();
+
+dynamic_horizon_scheduler dynamic_scheduler(N_horizons, N_active_procs,
+					     AH_data_array,
+					     dynamic_horizon_assignment
+					     && my_proc == 0
+					     && verbose_info
+						.print_algorithm_highlights);
 
 // print out which horizons we're finding on this processor
-if (hs.has_genuine_horizons())
+if (dynamic_horizon_assignment)
+   then {
+	const int hn = dynamic_scheduler.horizon_for_proc(my_proc);
+	if (hn > 0)
+	   then CCTK_VInfo(CCTK_THORNSTRING,
+		   "proc %d: initially searching for horizon %d/%d",
+			   my_proc, hn, int(N_horizons));
+	   else CCTK_VInfo(CCTK_THORNSTRING,
+		   "proc %d: initially idle", my_proc);
+	}
+else if (hs.has_genuine_horizons())
    then CCTK_VInfo(CCTK_THORNSTRING,
 		   "proc %d: searching for horizon%s %s/%d",
 		   my_proc,
@@ -180,8 +360,12 @@ if (hs.has_genuine_horizons())
     // of the loop (only) when all processors are done with all their genuine
     // horizons
     //
-    for (int hn = hs.init_hn() ; ; hn = hs.next_hn())
+    int static_hn = hs.init_hn();
+    for (;;)
     {
+    const int hn = dynamic_horizon_assignment
+		   ? dynamic_scheduler.horizon_for_proc(my_proc)
+		   : static_hn;
     if (verbose_info.print_algorithm_details)
        then CCTK_VInfo(CCTK_THORNSTRING,
 		       "Newton_solve(): processor %d working on horizon %d",
@@ -189,9 +373,14 @@ if (hs.has_genuine_horizons())
 
     // only try to find horizons every  find_every  time steps
     const bool horizon_is_genuine =
-      hs.is_genuine() && AH_data_array[hn]->search_flag;
+      dynamic_horizon_assignment
+      ? hn > 0 && AH_data_array[hn]->search_flag
+      : hs.is_genuine() && AH_data_array[hn]->search_flag;
     // this is only a pessimistic approximation
-    const bool there_is_another_genuine_horizon = hs.is_next_genuine();
+    const bool there_is_another_genuine_horizon
+      = dynamic_horizon_assignment
+      ? dynamic_scheduler.has_pending_horizons()
+      : hs.is_next_genuine();
     if (verbose_info.print_algorithm_details)
        then {
 	    CCTK_VInfo(CCTK_THORNSTRING,
@@ -209,6 +398,9 @@ if (hs.has_genuine_horizons())
 				  ? AH_data_ptr->ps_ptr : NULL;
     Jacobian*     const Jac_ptr = horizon_is_genuine
 				  ? AH_data_ptr->Jac_ptr: NULL;
+    const fp saved_origin_x = horizon_is_genuine ? ps_ptr->origin_x() : 0.0;
+    const fp saved_origin_y = horizon_is_genuine ? ps_ptr->origin_y() : 0.0;
+    const fp saved_origin_z = horizon_is_genuine ? ps_ptr->origin_z() : 0.0;
 
     if (horizon_is_genuine) {
       // deal with dependent horizons
@@ -481,6 +673,7 @@ if (hs.has_genuine_horizons())
 	// on the current horizon (which might be either genuine or dummy)
 	//
         bool do_return = false;
+        bool abandon_this_horizon = false;
 	for (int iteration = 1 ; ; ++iteration)
 	{
 	if (verbose_info.print_algorithm_debug)
@@ -660,7 +853,8 @@ if (hs.has_genuine_horizons())
 	// if so, compute and output BH diagnostics
 	//
         found_this_horizon
-           = (norms_are_ok
+           = (!abandon_this_horizon
+              && norms_are_ok
               && (I_was_pretracking
                   ? pretracking_was_successful
                   : Theta_norms.infinity_norm() <= solver_info.Theta_norm_for_convergence));
@@ -697,7 +891,8 @@ if (hs.has_genuine_horizons())
                                        mean_product_expansion_gradient,
                                        mean_mean_curvature_gradient,
                                        BH_diagnostics_info);
-		if (IO_info.output_BH_diagnostics)
+		if (IO_info.output_BH_diagnostics
+		    && !dynamic_horizon_assignment)
 		   then {
 			if (AH_data_ptr->BH_diagnostics_fileptr == NULL)
 			   then AH_data_ptr->BH_diagnostics_fileptr
@@ -750,11 +945,16 @@ if (hs.has_genuine_horizons())
 	// does *this* horizon need more iterations?
 	// i.e. has this horizon's Newton iteration not yet converged?
         const bool this_horizon_needs_more_iterations
-	   = horizon_is_genuine && Theta_is_ok
-	     && !found_this_horizon
-	     && !expansion_is_too_large
-	     && !horizon_is_too_large
-	     && (iteration < max_iterations);
+		   = horizon_is_genuine && !abandon_this_horizon
+		     && Theta_is_ok
+		     && !found_this_horizon
+		     && !expansion_is_too_large
+		     && !horizon_is_too_large
+		     && (iteration < max_iterations);
+	const bool finished_this_horizon
+		   = horizon_is_genuine
+		     && !this_horizon_needs_more_iterations
+		     && !I_am_pretracking;
 
 	// do I (this processor) need to do more iterations
 	// on this or a following horizon?
@@ -788,7 +988,8 @@ if (hs.has_genuine_horizons())
 			     hn, iteration, effective_expansion_status,
 			     mean_horizon_radius,
 			     (norms_are_ok ? Theta_norms.infinity_norm() : 0.0),
-			     found_this_horizon, I_need_more_iterations,
+			     found_this_horizon, finished_this_horizon,
+			     I_need_more_iterations,
 			     isb);
 	// set found-this-horizon flags
 	// for all active processors' non-dummy horizons
@@ -851,23 +1052,59 @@ if (hs.has_genuine_horizons())
 		if ((my_proc == 0) && verbose_info.print_physics_details)
 		   then found_AH_data.BH_diagnostics
 				     .print(N_horizons, found_hn);
-		}
-		  }
 
+		if (dynamic_horizon_assignment && my_proc == 0)
+		   then {
+			if (IO_info.output_BH_diagnostics)
+			   then {
+				if (found_AH_data.BH_diagnostics_fileptr == NULL)
+				   then found_AH_data.BH_diagnostics_fileptr
+					  = found_AH_data.BH_diagnostics
+					    .setup_output_file
+					      (IO_info, N_horizons, found_hn);
+				found_AH_data.BH_diagnostics.output
+				  (found_AH_data.BH_diagnostics_fileptr, IO_info);
+				}
+			if (IO_info.output_h)
+			   then {
+				if (!found_AH_data.h_files_written)
+				   then {
+					setup_h_files(*found_AH_data.ps_ptr,
+						      IO_info, found_hn);
+					found_AH_data.h_files_written = true;
+					}
+				output_gridfn(*found_AH_data.ps_ptr,
+					      gfns::gfn__h, "h", GH,
+					      IO_info, IO_info.h_base_file_name,
+					      IO_info.h_min_digits, found_hn,
+					      verbose_info
+						.print_algorithm_highlights);
+				}
+			  }
+			}
+			  }
+
+	if (dynamic_horizon_assignment)
+	   then dynamic_scheduler.complete_and_reassign
+		  (isb, my_proc == 0
+			&& verbose_info.print_algorithm_highlights);
 
 	//
 	// if we found our horizon, maybe output the horizon shape?
 	//
-	if (found_this_horizon && ! I_am_pretracking)
-	   then {
-		// printf("will output h/Th/mc: %d/%d/%d\n", IO_info.output_h, IO_info.output_Theta, IO_info.output_mean_curvature); //xxxxxxxxxxxx
-		if (IO_info.output_h)
+		if (found_this_horizon && ! I_am_pretracking)
 		   then {
-			// if this is the first time we've output h for this
-			// horizon, maybe output an OpenDX control file?
-			if (!AH_data_ptr->h_files_written)
-			   then setup_h_files(*ps_ptr, IO_info, hn);
-			output_gridfn(*ps_ptr, gfns::gfn__h,
+			// printf("will output h/Th/mc: %d/%d/%d\n", IO_info.output_h, IO_info.output_Theta, IO_info.output_mean_curvature); //xxxxxxxxxxxx
+			if (IO_info.output_h && !dynamic_horizon_assignment)
+			   then {
+				// if this is the first time we've output h for this
+				// horizon, maybe output an OpenDX control file?
+				if (!AH_data_ptr->h_files_written)
+				   then {
+					setup_h_files(*ps_ptr, IO_info, hn);
+					AH_data_ptr->h_files_written = true;
+					}
+				output_gridfn(*ps_ptr, gfns::gfn__h,
                                       "h", GH,
 				      IO_info, IO_info.h_base_file_name,
                                       IO_info.h_min_digits,
@@ -959,9 +1196,15 @@ if (hs.has_genuine_horizons())
 	if	((rcond >= 0.0) && (rcond < 100.0*FP_EPSILON))
 	   then {
 		CCTK_VWarn(1, __LINE__, __FILE__, CCTK_THORNSTRING,
-		   "Newton_solve: Jacobian matrix is numerically singular!");
-		// give up on this horizon
-		break;				// *** LOOP CONTROL ***
+			   "Newton_solve: Jacobian matrix is numerically singular!");
+		// In dynamic mode all ranks must reach the same collective status
+		// exchange before this rank can be assigned another horizon.
+		if (dynamic_horizon_assignment)
+		   then {
+			abandon_this_horizon = true;
+			continue;			// *** LOOP CONTROL ***
+			}
+		break;					// *** LOOP CONTROL ***
 		}
 	if (verbose_info.print_algorithm_details)
 	   then {
@@ -995,6 +1238,12 @@ if (hs.has_genuine_horizons())
 
         if (! I_am_pretracking) {
           if (horizon_is_genuine) {
+            if (!found_this_horizon)
+               then {
+                    ps_ptr->origin_x(saved_origin_x);
+                    ps_ptr->origin_y(saved_origin_y);
+                    ps_ptr->origin_z(saved_origin_z);
+                    }
             if (! AH_data_ptr->initial_guess_info.reset_horizon_after_not_finding) {
               if (! found_this_horizon) {
                 // the surface failed; backtrack and continue
@@ -1127,6 +1376,8 @@ if (hs.has_genuine_horizons())
     I_am_pretracking = false;
 
     // end of this horizon
+    if (!dynamic_horizon_assignment)
+       then static_hn = hs.next_hn();
     }
 
 // we should never get to here
@@ -1154,7 +1405,7 @@ assert( false );
 // my_active_flag = Is this processor an active processor?
 // hn,iteration,effective_expansion_status,
 // mean_horizon_radius,infinity_norm,
-// found_this_horizon,I_need_more_iterations
+// found_this_horizon,finished_this_horizon,I_need_more_iterations
 //	= On an active processors, these are the values to be broadcast.
 //	  On a dummy processors, these are ignored.
 // isb = (out) Holds both user buffers (set to the broadcast results)
@@ -1172,7 +1423,8 @@ bool broadcast_status(const cGH* GH,
 		      int hn, int iteration,
 		      enum expansion_status effective_expansion_status,
 		      fp mean_horizon_radius, fp infinity_norm,
-		      bool found_this_horizon, bool I_need_more_iterations,
+		      bool found_this_horizon, bool finished_this_horizon,
+		      bool I_need_more_iterations,
 		      struct iteration_status_buffers& isb)
 {
 assert( my_proc >= 0 );
@@ -1189,8 +1441,7 @@ assert( my_proc < N_procs );
 // arrays on each processor (this slightly simplifies the code).
 //
 // To reduce overheads, we do the entire operation with a single (CCTK_REAL)
-// Cactus reduce, casting values to CCTK_REAL as necessary (and encoding
-// Boolean flags into signs of known-to-be-positive values.
+// Cactus reduce, casting values to CCTK_REAL as necessary.
 //
 // Alas MPI (and thus Cactus) requires the input and output reduce buffers
 // to be distinct, so we need two copies of the buffers on each processor.
@@ -1202,13 +1453,14 @@ assert( my_proc < N_procs );
 //     floating-point value, but it's not worth the trouble...
 enum	{
 	// CCTK_INT buffer
-	buffer_var__hn = 0,	// also encodes found_this_horizon flag
-				// in sign: +=true, -=false
-	buffer_var__iteration,	// also encodes I_need_more_iterations flag
-				// in sign: +=true, -=false
+	buffer_var__hn = 0,
+	buffer_var__iteration,
 	buffer_var__expansion_status,
 	buffer_var__mean_horizon_radius,
 	buffer_var__Theta_infinity_norm,
+	buffer_var__found_horizon,
+	buffer_var__finished_horizon,
+	buffer_var__needs_more_iterations,
 	N_buffer_vars // no comma
 	};
 
@@ -1223,6 +1475,8 @@ if (isb.hn_buffer == NULL)
 	isb.mean_horizon_radius_buffer = new fp  [N_active_procs];
 	isb.Theta_infinity_norm_buffer = new fp  [N_active_procs];
 	isb.found_horizon_buffer       = new bool[N_active_procs];
+	isb.finished_horizon_buffer    = new bool[N_active_procs];
+	isb.needs_more_iterations_buffer = new bool[N_active_procs];
 
 	isb.send_buffer_ptr    = new jtutil::array2d<CCTK_REAL>
 						    (0, N_active_procs-1,
@@ -1241,18 +1495,22 @@ jtutil::zero_C_array(send_buffer.N_array(), send_buffer.data_array());
 if (my_active_flag)
    then {
 	assert( send_buffer.is_valid_i(my_proc) );
-	assert( hn >= 0 );		// encoding scheme assumes this
-	assert( iteration > 0 );	// encoding scheme assumes this
-	send_buffer(my_proc, buffer_var__hn)
-		= found_this_horizon ? +hn : -hn;
-	send_buffer(my_proc, buffer_var__iteration)
-		= I_need_more_iterations ? +iteration : -iteration;
+	assert( hn >= 0 );
+	assert( iteration > 0 );
+	send_buffer(my_proc, buffer_var__hn) = hn;
+	send_buffer(my_proc, buffer_var__iteration) = iteration;
 	send_buffer(my_proc, buffer_var__expansion_status)
-		= int(effective_expansion_status);
+			= int(effective_expansion_status);
 	send_buffer(my_proc, buffer_var__mean_horizon_radius)
 		= mean_horizon_radius;
 	send_buffer(my_proc, buffer_var__Theta_infinity_norm)
-		= infinity_norm;
+			= infinity_norm;
+	send_buffer(my_proc, buffer_var__found_horizon)
+			= found_this_horizon ? 1.0 : 0.0;
+	send_buffer(my_proc, buffer_var__finished_horizon)
+			= finished_this_horizon ? 1.0 : 0.0;
+	send_buffer(my_proc, buffer_var__needs_more_iterations)
+			= I_need_more_iterations ? 1.0 : 0.0;
 	}
 
 //
@@ -1298,17 +1556,18 @@ MPI_Allreduce(
 bool any_proc_needs_more_iterations = false;
 	for (int proc = 0 ; proc < N_active_procs ; ++proc)
 	{
-	const int hn_temp = static_cast<int>(
-			      receive_buffer(proc, buffer_var__hn)
-					    );
-	isb.hn_buffer[proc] = jtutil::abs(hn_temp);
-	isb.found_horizon_buffer[proc] = (hn_temp > 0);
-
-	const int iteration_temp = static_cast<int>(
-				     receive_buffer(proc, buffer_var__iteration)
-						   );
-	isb.iteration_buffer[proc] = jtutil::abs(iteration_temp);
-	const bool proc_needs_more_iterations = (iteration_temp > 0);
+	isb.hn_buffer[proc]
+		= static_cast<int>(receive_buffer(proc, buffer_var__hn));
+	isb.iteration_buffer[proc]
+		= static_cast<int>(receive_buffer(proc, buffer_var__iteration));
+	isb.found_horizon_buffer[proc]
+		= receive_buffer(proc, buffer_var__found_horizon) != 0.0;
+	isb.finished_horizon_buffer[proc]
+		= receive_buffer(proc, buffer_var__finished_horizon) != 0.0;
+	isb.needs_more_iterations_buffer[proc]
+		= receive_buffer(proc, buffer_var__needs_more_iterations) != 0.0;
+	const bool proc_needs_more_iterations
+		= isb.needs_more_iterations_buffer[proc];
 	any_proc_needs_more_iterations |= proc_needs_more_iterations;
 
 	isb.expansion_status_buffer[proc]

@@ -56,7 +56,6 @@ CCTK_REAL auto_res_ratio[100] "Multiplicative factor by which we want to scale t
   0:* :: ""
 } 2.0
 
-
 KEYWORD auto_res_grid[100] "Choose resolution according to how grids overlap"   
 {
   "fully contained" :: "SF must be fully contained in Cartesian grid"

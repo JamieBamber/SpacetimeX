@@ -246,6 +246,13 @@ keyword method "what should this thorn do for each apparent horizon?" \
 "find horizons"		  :: "find the apparent horizon"
 } "find horizons"
 
+keyword parallel_horizon_assignment \
+  "how should independent horizon searches be assigned to MPI processes?"
+{
+"static"  :: "use the original fixed round-robin assignment"
+"dynamic" :: "learn balanced process queues from the first dependency-ready searches"
+} "static"
+
 #
 # We support searching for up to N_horizons distinct apparent horizons
 # (some of which may be nested inside others) in a slice.

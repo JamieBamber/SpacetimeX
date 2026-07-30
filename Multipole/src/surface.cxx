@@ -7,9 +7,12 @@
 
 #include <util_Table.h>
 
+#include <algorithm>
+#include <cmath>
+
 namespace Multipole {
 
-// Interpolate both the real and imag part of a complext field to the surface
+// Interpolate both the real and imaginary parts of a complex field to the surface
 void Surface::interpolate(CCTK_ARGUMENTS, int realFieldIndex,
                           int imagFieldIndex) {
   DECLARE_CCTK_PARAMETERS;
@@ -29,23 +32,27 @@ void Surface::interpolate(CCTK_ARGUMENTS, int realFieldIndex,
   /* DriverInterpolate arguments that aren't currently used */
   const int coordSystemHandle = 0;
   const CCTK_INT interpCoordsTypeCode = 0;
-  const CCTK_INT outputArrayTypes[1] = {0};
+  const CCTK_INT outputArrayTypes[2] = {0, 0};
 
-  const int interpHandle = CCTK_InterpHandle("CarpetX");
+  const int interpHandle = CCTK_InterpHandle(interpolator_name);
   if (interpHandle < 0) {
-    CCTK_VERROR("Could not obtain interpolator handle for built-in 'CarpetX' "
-                "interpolator: %d",
-                interpHandle);
+    CCTK_VERROR("Could not obtain interpolator handle for '%s': %d",
+                interpolator_name, interpHandle);
   }
 
   int ierr;
 
   // Interpolation parameter table
   int paramTableHandle = Util_TableCreate(UTIL_TABLE_FLAGS_DEFAULT);
+  if (paramTableHandle < 0) {
+    CCTK_VERROR("Could not create interpolation parameter table: %d",
+                paramTableHandle);
+  }
 
   if ((ierr = Util_TableSetFromString(paramTableHandle, interpolator_pars)) <
       0) {
-    CCTK_VERROR("Can't set pars in parameter table: %d", ierr);
+    CCTK_VERROR("Could not parse interpolator_pars '%s': %d",
+                interpolator_pars, ierr);
   }
 
   ierr = DriverInterpolate(cctkGH, Loop::dim, interpHandle, paramTableHandle,
@@ -54,15 +61,29 @@ void Surface::interpolate(CCTK_ARGUMENTS, int realFieldIndex,
                            nInputArrays, outputArrayTypes, outputArrays);
 
   if (ierr < 0) {
-    CCTK_VWarn(1, __LINE__, __FILE__, CCTK_THORNSTRING,
-               "CCTK_InterpGridArrays returned error code %d", ierr);
+    CCTK_VERROR("Interpolator '%s' failed with error code %d",
+                interpolator_name, ierr);
   }
 
   if (imagFieldIndex == -1) {
     std::fill(imagF_.begin(), imagF_.end(), 0);
   }
 
-  Util_TableDestroy(paramTableHandle);
+  if (CCTK_MyProc(cctkGH) == 0) {
+    for (int p = 0; p < nPoints; ++p) {
+      if (!std::isfinite(realF_[p]) || !std::isfinite(imagF_[p])) {
+        CCTK_VERROR("Interpolator '%s' returned a non-finite value at "
+                    "surface point %d",
+                    interpolator_name, p);
+      }
+    }
+  }
+
+  const int destroyStatus = Util_TableDestroy(paramTableHandle);
+  if (destroyStatus < 0) {
+    CCTK_VERROR("Could not destroy interpolation parameter table: %d",
+                destroyStatus);
+  }
 }
 
 // Take the integral of conj(array1)*array2*sin(th)
