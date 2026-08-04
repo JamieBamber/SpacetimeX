@@ -39,8 +39,13 @@ subroutine qlm_paramcheck (CCTK_ARGUMENTS)
      ! Import surface description
      qlm_nghoststheta(hn) = nghoststheta(sn)
      qlm_nghostsphi  (hn) = nghostsphi(sn)
-     qlm_ntheta      (hn) = ntheta(sn)
-     qlm_nphi        (hn) = nphi(sn)
+     if (sn - 1 < num_extraction_surface) then
+        qlm_ntheta(hn) = ntheta_extraction
+        qlm_nphi  (hn) = nphi_extraction
+     else
+        qlm_ntheta(hn) = ntheta_AH
+        qlm_nphi  (hn) = nphi_AH
+     end if
 
      ! Symmetries
      if (symmetric_x(sn) /= 0 .or. &

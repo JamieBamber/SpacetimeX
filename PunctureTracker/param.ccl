@@ -1,5 +1,17 @@
 # Parameter definitions for thorn PunctureTracker
 
+SHARES: BHClusterX
+USES INT npunctures
+USES REAL posx
+USES REAL posy
+USES REAL posz
+
+BOOLEAN read_from_BHClusterX \
+  "Initialize and track all punctures configured by BHClusterX" \
+  STEERABLE=RECOVER
+{
+} "yes"
+
 BOOLEAN verbose "speak up?" STEERABLE=always
 {
 } "no"
@@ -33,6 +45,12 @@ REAL puncture_mass[100] "Mass associated with each tracked puncture"
 } 1.0
 
 REAL puncture_eta_weight[100] "Weight associated with each tracked puncture for position-dependent eta profiles"
+{
+  0:* :: "weight must be non-negative"
+} 0.25
+
+REAL eta_profile_weight \
+  "Default eta-profile weight for punctures without an explicit per-puncture weight"
 {
   0:* :: "weight must be non-negative"
 } 0.25
@@ -73,7 +91,7 @@ INT tracking_level "AMR level whose timestep cadence is used when tracking_level
   -1:* :: "negative disables level-cadence tracking"
 } -1
 
-INT tracking_finest_level "Finest AMR level used to compute level-cadence tracking; negative queries CarpetX::max_num_levels"
+INT tracking_finest_level "Finest AMR level used to compute level-cadence tracking; negative queries CarpetX::max_num_levels" STEERABLE=RECOVER
 {
   -1:* :: "negative means query CarpetX::max_num_levels at runtime"
 } -1

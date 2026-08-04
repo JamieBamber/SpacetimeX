@@ -344,7 +344,8 @@ if (dynamic_horizon_assignment)
 	}
 else if (hs.has_genuine_horizons())
    then CCTK_VInfo(CCTK_THORNSTRING,
-		   "proc %d: searching for horizon%s %s/%d",
+		   "proc %d: assigned horizon slot%s %s/%d "
+		   "(slots without search_flag use collective dummy calls)",
 		   my_proc,
 		   (hs.my_N_horizons() > 1 ? "s" : ""),
 		   hs.sequence_string(","), int(N_horizons));
@@ -427,6 +428,7 @@ else if (hs.has_genuine_horizons())
 
     if (horizon_is_genuine) {
       if (AH_data_ptr->move_origins
+          && !AH_set_origins_to_punctures
           && AH_data_ptr->depends_on == 0
           && AH_data_ptr->found_flag)
       {
@@ -567,7 +569,8 @@ else if (hs.has_genuine_horizons())
           ps.synchronize();
         }
       }
-      if (track_origin_from_grid_scalar[hn]) {
+      if (track_origin_from_grid_scalar[hn] &&
+          !AH_set_origins_to_punctures) {
          track_origin(cctkGH, *ps_ptr, AH_data_ptr, hn, verbose_info.print_algorithm_details);
       }
       

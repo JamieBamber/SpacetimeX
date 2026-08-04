@@ -62,6 +62,12 @@ boolean read_from_BHClusterX \
 {
 } "true"
 
+boolean AH_set_origins_to_punctures \
+  "recenter each horizon search using tracked punctures and the merger hierarchy" \
+  STEERABLE=always
+{
+} "false"
+
 # set this to (try to) find apparent horizons at every time step
 int find_every "how often should we try to find apparent horizons?" STEERABLE=always
 {
@@ -116,6 +122,13 @@ boolean discover_mergers \
   STEERABLE=always
 {
 } "true"
+
+int merger_discovery_min_iteration \
+  "first Cactus iteration at which dynamical merger discovery may run" \
+  STEERABLE=always
+{
+0:* :: "any non-negative iteration"
+} 1
 
 real merger_search_factor \
   "Method #1 search factor in d_ij < 4 merger_search_factor (m_i + m_j)" \

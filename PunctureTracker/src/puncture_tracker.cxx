@@ -20,6 +20,16 @@ static int previous_iteration = 0;
 
 constexpr int max_num_tracked = 100;
 
+static CCTK_REAL etaWeight(const int n,
+                           const CCTK_REAL *const individualWeights,
+                           const CCTK_REAL defaultWeight) {
+  char parameter[64];
+  snprintf(parameter, sizeof(parameter), "puncture_eta_weight[%d]", n);
+  return CCTK_ParameterQueryTimesSet(parameter, CCTK_THORNSTRING) > 0
+             ? individualWeights[n]
+             : defaultWeight;
+}
+
 static int getCarpetXFinestLevel() {
   int type = 0;
   const void *const value =
@@ -70,18 +80,27 @@ extern "C" void PunctureTracker_Init(CCTK_ARGUMENTS) {
 
   pt_num_tracked[0] = 0;
   pt_num_groups[0] = 0;
-  for (int n = 0; n < max_num_tracked; ++n) {
-    if (track[n]) {
+  if (npunctures < 0 || npunctures > max_num_tracked) {
+    CCTK_VERROR("BHClusterX::npunctures=%d is outside PunctureTracker's "
+                "supported range [0,%d]", int(npunctures), max_num_tracked);
+  }
+  for (int n = 0; n < npunctures; ++n) {
+    if (read_from_BHClusterX || track[n]) {
       pt_loc_t[n] = cctk_time;
-      pt_loc_x[n] = initial_x[n];
-      pt_loc_y[n] = initial_y[n];
-      pt_loc_z[n] = initial_z[n];
+      pt_loc_x[n] = read_from_BHClusterX ? posx[n] : initial_x[n];
+      pt_loc_y[n] = read_from_BHClusterX ? posy[n] : initial_y[n];
+      pt_loc_z[n] = read_from_BHClusterX ? posz[n] : initial_z[n];
       pt_vel_t[n] = cctk_time;
       pt_vel_x[n] = 0.0;
       pt_vel_y[n] = 0.0;
       pt_vel_z[n] = 0.0;
+      // The bare-mass parameters used to construct puncture initial data are
+      // not generally equal to the physical black-hole masses.  Keep the
+      // latter as independent PunctureTracker inputs for merger estimates and
+      // apparent-horizon initial guesses.
       pt_mass[n] = puncture_mass[n];
-      pt_eta_weight[n] = puncture_eta_weight[n];
+      pt_eta_weight[n] =
+          etaWeight(n, puncture_eta_weight, eta_profile_weight);
       ++pt_num_tracked[0];
     } else {
       pt_loc_t[n] = 0.0;
@@ -113,8 +132,8 @@ extern "C" void PunctureTracker_Setup(CCTK_ARGUMENTS) {
   if (g_punctures == nullptr) {
     g_punctures = new PunctureContainer();
 
-    for (int n = 0; n < max_num_tracked; ++n) {
-      if (track[n]) {
+    for (int n = 0; n < npunctures; ++n) {
+      if (read_from_BHClusterX || track[n]) {
         g_punctures->getTime().push_back(pt_loc_t[n]);
         g_punctures->getLocation()[0].push_back(pt_loc_x[n]);
         g_punctures->getLocation()[1].push_back(pt_loc_y[n]);
@@ -150,7 +169,7 @@ extern "C" void PunctureTracker_Setup(CCTK_ARGUMENTS) {
 
   pt_num_tracked[0] = nPunctures;
   pt_num_groups[0] = CCTK_INT(g_punctures->getGroupMass().size());
-  for (int n = 0; n < max_num_tracked; ++n) {
+  for (int n = 0; n < npunctures; ++n) {
     pt_group_membership[n] = -1;
     pt_group_t[n] = 0.0;
     pt_group_x[n] = 0.0;
@@ -292,7 +311,7 @@ extern "C" void PunctureTracker_Track(CCTK_ARGUMENTS) {
   // Write to pt_loc_foo and pt_vel_foo
   pt_num_tracked[0] = nPunctures;
   pt_num_groups[0] = CCTK_INT(g_punctures->getGroupMass().size());
-  for (int i = 0; i < max_num_tracked; ++i) {
+  for (int i = 0; i < npunctures; ++i) {
     pt_group_membership[i] = -1;
     pt_group_t[i] = 0.0;
     pt_group_x[i] = 0.0;

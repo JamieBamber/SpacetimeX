@@ -2,7 +2,7 @@
 # $Header$
 
 implements: AHFinderDirect
-inherits: CoordinatesX ADMBaseX SphericalSurface IO
+inherits: CoordinatesX ADMBaseX SphericalSurface PunctureTracker IO
 
 USES INCLUDE HEADER: loop_device.hxx
 

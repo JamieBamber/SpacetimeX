@@ -99,6 +99,11 @@ SHARES: ADMBaseX
 SHARES: SphericalSurface
 
 USES INT nsurfaces
+USES INT num_extraction_surface
+USES INT ntheta_extraction
+USES INT nphi_extraction
+USES INT ntheta_AH
+USES INT nphi_AH
 
 USES BOOLEAN auto_res
 
