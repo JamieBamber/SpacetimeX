@@ -1,0 +1,463 @@
+QUASILOCALMEASURES SCALAR-OUTPUT REFERENCE
+==========================================
+
+Scope
+-----
+This note describes the formulas actually implemented in this adapted thorn,
+principally in src/qlm_analyse.F90.  It is not merely a list of formulas with
+similar names from the literature.  Cartesian components x,y,z are combined
+where requested.
+
+Conventions and notation
+------------------------
+
+S is the closed two-surface, parameterized by y^A=(theta,phi), with embedding
+x^i(y^A).  The spatial metric and extrinsic curvature are gamma_ij and K_ij,
+and K=gamma^ij K_ij.  The induced two-metric is
+
+    q_AB = gamma_ij (partial_A x^i)(partial_B x^j),
+
+and the physical area element is
+
+    dA = sqrt(det q) dtheta dphi.
+
+s^i is the outward-pointing unit spatial normal to S.  The null tetrad is
+normalized so that
+
+    t^mu = (l^mu+n^mu)/sqrt(2),   s^mu = (l^mu-n^mu)/sqrt(2).
+
+The code uses G=c=1 and its extrinsic-curvature sign convention is
+partial_t gamma_ij=-2 K_ij when lapse=1 and shift=0.  epsilon^ijk denotes the
+flat Cartesian alternating symbol, delta_ij the flat Cartesian metric, and
+x_0^i=(qlm_origin_x,qlm_origin_y,qlm_origin_z).  Repeated spatial indices are
+summed.
+
+Numerically, surface integrals are evaluated with the thorn's spherical
+quadrature weights (described in the source as Driscoll-Healy weights).  The
+continuous formulas below suppress that discretization detail.
+
+Two broad warnings are essential:
+
+1. Only the area, areal radius, and irreducible mass are intrinsic geometry
+   without further choices.  Spins require a rotational vector field or
+   coordinate rotations.  The finite-radius ADM and Weinberg outputs are
+   coordinate-dependent diagnostics and become the corresponding asymptotic
+   charges only under their usual asymptotically Cartesian/flat assumptions
+   and in the large-surface limit.
+
+2. In this implementation the ADM and Weinberg integrations use the physical
+   normal s^i and physical dA even though comments in the code quote formulas
+   conventionally written as n^i r^2 dOmega.  The conformal-ADM family instead
+   uses an oriented coordinate surface element defined below.
+
+
+GEOMETRY AND KERR-SHAPE ESTIMATES
+---------------------------------
+
+qlm_polar_circumference_0
+qlm_polar_circumference_pi_2
+
+    C_p(phi_0) = 2 integral_(north pole)^(south pole)
+                       sqrt(q_theta_theta(theta,phi_0)) dtheta,
+
+with phi_0=0 and phi_0=pi/2, respectively.  The factor two closes the meridian
+through the opposite longitude.  These are proper lengths of two selected
+coordinate meridians.  They diagnose shape distortion, but the choice of
+meridian is coordinate dependent (and the two values need not agree for a
+non-axisymmetric surface).
+
+qlm_area
+
+    A = integral_S dA.
+
+This is the proper physical area of S.  For an apparent horizon it is the
+horizon area.
+
+qlm_irreducible_mass
+
+    M_irr = sqrt(A/(16 pi)) = R/2.
+
+For a black-hole horizon this is the irreducible mass: the mass remaining after
+all classically extractable rotational energy has been removed.  It depends
+only on horizon area.
+
+qlm_radius
+
+    R = sqrt(A/(4 pi)).
+
+This is the areal (area) radius: the radius of a round sphere with the same
+area.  It is not generally a coordinate radius.
+
+qlm_spin_guess
+qlm_mass_guess
+
+These are Kerr-shape estimates constructed from A and the implemented
+equatorial circumference C_e (qlm_equatorial_circumference):
+
+    r_K = A/(2 C_e),
+    a_guess^2 = A/(4 pi) - r_K^2,
+    M_guess = (r_K^2 + a_guess^2)/(2 r_K),
+    J_guess = a_guess M_guess.
+
+The outputs are qlm_mass_guess=M_guess and qlm_spin_guess=J_guess.  Here a is
+the Kerr specific angular momentum J/M, not dimensionless spin.  The formulas
+invert the Kerr-horizon relations A=4 pi(r_+^2+a^2) and
+C_e=2 pi(r_+^2+a^2)/r_+.  They are therefore only shape-based guesses and are
+coordinate/tetrad independent only to the extent that the chosen equator is
+geometrically meaningful.  If a_guess^2<0, the code returns a negative
+qlm_spin_guess whose magnitude is sqrt(abs(a_guess^2))*M_guess; that negative
+value flags an invalid (formally imaginary) Kerr spin estimate.
+
+
+KILLING-VECTOR DIAGNOSTIC
+-------------------------
+
+qlm_killing_eigenvalue_re
+qlm_killing_eigenvalue_im
+
+These are the real and imaginary parts of a complex eigenvalue lambda of a
+3-by-3 monodromy (holonomy) matrix, not a mass or spin and not a surface
+integral.  For killing_vector_method="eigenvector", the code transports three
+independent initial triples (xi^theta,xi^phi,chi) once around the selected
+equator using the two-surface Killing-transport equations.  It diagonalizes
+the resulting linear map and chooses
+
+    lambda = argmin_(lambda_n) |lambda_n-1|.
+
+The output is Re(lambda), Im(lambda).  An exactly single-valued transported
+Killing field should have lambda=1+0i; the code rejects the field when
+|lambda-1|>10^-4.  Thus these values are a numerical consistency diagnostic.
+They are only assigned by the "eigenvector" method, so they should not be
+interpreted when another killing_vector_method is selected.
+
+
+ANGULAR MOMENTA (OUTPUT NAMES CALL THESE "SPINS")
+-------------------------------------------------
+
+Let phi^A be the normalized axial Killing vector (or approximate rotational
+vector) found on S, and let its spatial push-forward be
+
+    phi^i = (partial_A x^i) phi^A.
+
+The normalization procedure aims to give its closed orbits affine length
+2 pi.  The normal-bundle rotation one-form in the code's conventions obeys
+
+    phi^i omega_i = -phi^i s^j K_ij.
+
+qlm_spin
+
+    J_phi = (1/(8 pi)) integral_S phi^i s^j K_ij dA
+          = -(1/(8 pi)) integral_S phi^i omega_i dA.
+
+This is the isolated-horizon/quasi-local angular momentum associated with the
+chosen axial vector.  It is a signed angular momentum J (dimension mass^2),
+not Kerr a=J/M and not dimensionless chi=J/M^2.  Its reliability depends on
+the surface being sufficiently axisymmetric and on the selected Killing-vector
+method and normalization.
+
+qlm_npspin
+
+With alpha_NP and beta_NP the Newman-Penrose spin coefficients and m^i the
+complex tangent null vector, the code evaluates
+
+    J_NP = -(1/(4 pi)) integral_S
+               Re[(alpha_NP + conjugate(beta_NP)) phi^i gamma_ij m^j] dA.
+
+This is intended to be the same isolated-horizon angular momentum as qlm_spin,
+but evaluates the normal connection through Newman-Penrose quantities.  It is
+therefore useful as a formulation/numerical cross-check and shares the same
+dependence on phi^i and tetrad/sign conventions.
+
+qlm_wsspin
+
+The exact implemented formula is
+
+    J_WS = (1/(4 pi)) integral_S zeta Im(Psi_2) dA,
+
+where zeta=qlm_inv_z is an invariant axial coordinate constructed from the
+Killing field by
+
+    D_A zeta = (1/R^2) epsilon_BA phi^B,
+
+with its additive constant fixed so that integral_S zeta dA=0.  This is a
+Weyl-scalar/isolated-horizon spin estimate.  Caution: the source itself contains
+an unresolved sign/factor comment immediately above this calculation, so this
+entry reports the code exactly rather than asserting a convention-independent
+identity with qlm_spin.
+
+qlm_cvspin
+
+The apparent intent (also stated in the run-time label) is an angular momentum
+computed using the surface coordinate vector partial_phi in place of the found
+Killing vector, i.e. something of the form
+
+    J_partial_phi = (1/(8 pi)) integral_S
+                         (partial_phi x^i) s^j K_ij dA.
+
+However, the current source initializes qlm_cvspin to zero, never adds an
+integrand to it, and finally divides it by 8 pi.  Therefore this output is
+identically zero and does NOT currently calculate the displayed intended
+formula.  If killing_vector_method="axial", qlm_spin itself uses
+phi^A=(0,1) and supplies that coordinate-vector calculation.
+
+qlm_coordspinx, qlm_coordspiny, qlm_coordspinz
+
+Define coordinate rotation generators about the supplied surface origin:
+
+    varphi_x^i = (0, -(z-z_0),  y-y_0),
+    varphi_y^i = (z-z_0, 0, -(x-x_0)),
+    varphi_z^i = (-(y-y_0), x-x_0, 0).
+
+Then, for a=x,y,z,
+
+    J_a^coord = (1/(8 pi)) integral_S varphi_a^i s^j K_ij dA.
+
+These form a convenient coordinate spin/angular-momentum vector and do not
+require axisymmetry or a Killing-vector solve.  They are coordinate and
+origin dependent.  Their magnitude/direction is often useful in numerical
+relativity, but they are not intrinsic charges on a general finite surface.
+
+qlm_mass
+
+    M_H = sqrt(R^4 + 4 J_phi^2)/(2 R)
+        = sqrt(M_irr^2 + J_phi^2/(4 M_irr^2)).
+
+This is the Christodoulou (horizon) mass constructed from area and qlm_spin.
+For a Kerr isolated horizon it is the black-hole mass including rotational
+energy.  It inherits any error or ambiguity in qlm_spin; if no Killing vector
+is available, the code sets qlm_spin=0 and this reduces to M_irr.
+
+
+FINITE-SURFACE "ADM" DIAGNOSTICS USING PHYSICAL dA
+--------------------------------------------------
+
+For these entries define h_mu_nu=g_mu_nu-eta_mu_nu.  In this routine the
+four-metric used for h is explicitly reconstructed with lapse alpha=1 and
+shift beta^i=0, irrespective of the interpolated lapse and shift.  Spatial
+derivatives are Cartesian coordinate derivatives.
+
+qlm_adm_energy
+
+The exact implemented finite-surface expression is
+
+    E_ADM[S] = (1/(16 pi)) integral_S s^c [
+        delta^ab partial_b h_ac
+        - gamma^ab partial_c h_ab
+        - h_ab partial_c gamma^ab ] dA.
+
+This is intended as an ADM-energy surface flux.  ADM energy is rigorously an
+asymptotic charge; at finite radius this value is coordinate dependent and is
+not the horizon/Christodoulou mass qlm_mass.
+
+qlm_adm_momentum_x, qlm_adm_momentum_y, qlm_adm_momentum_z
+
+    P_ADM^a[S] = (1/(8 pi)) integral_S
+                     (K^a_b - K delta^a_b) s^b dA,
+
+where K^a_b=gamma^ac K_cb.  These are finite-surface versions of the ADM linear
+momentum flux.  They become ADM momentum only at spatial infinity under the
+standard asymptotic conditions.
+
+qlm_adm_angular_momentum_x, qlm_adm_angular_momentum_y,
+qlm_adm_angular_momentum_z
+
+    J_ADM^a[S] = (1/(8 pi)) integral_S epsilon^abc x_b
+                     (K^c_l - K delta^c_l) s^l dA.
+
+The contractions in the code raise the first index of K with gamma^ij.  Note
+especially that this family uses the absolute grid coordinates x^i, NOT
+x^i-x_0^i; changing the coordinate origin changes angular momentum by the
+usual origin-times-linear-momentum term.  These are finite-radius,
+coordinate-dependent approximations to asymptotic ADM angular momentum.
+
+
+FINITE-RADIUS CONFORMAL COORDINATE-SURFACE FLUXES
+-------------------------------------------------
+
+These extra outputs deliberately use an oriented coordinate surface element,
+not s_i dA.  Define
+
+    dSigma_i = [ (partial_theta x) cross (partial_phi x) ]_i
+               dtheta dphi,
+    chi_raw = det(gamma)^(-1/3),
+    tilde_gamma_ij = chi_raw gamma_ij,
+    tilde_gamma^ij = gamma^ij/chi_raw,
+    tilde_Gamma^i = tilde_gamma^jk tilde_Gamma^i_jk,
+    chi = max(chi_raw,10^-4),
+    tilde_A^i_j = gamma^ik K_kj - (1/3) delta^i_j K.
+
+The floor is used only in explicit powers/divisions of chi; derivatives and
+the conformal metric use chi_raw.  Orientation follows the parameterization
+(theta,phi).
+
+qlm_conformal_adm_energy
+
+    E_cADM[S] = (1/(16 pi)) integral_Scoord chi^(-1/2) [
+        tilde_Gamma^i + (2/chi) tilde_gamma^ij partial_j chi_raw
+        ] dSigma_i.
+
+This is a BSSN-like conformal finite-radius mass/energy flux.  It is explicitly
+documented in interface.ccl as a diagnostic on a coordinate surface, and is
+not an invariant quasi-local horizon mass.
+
+qlm_conformal_adm_momentum_x, qlm_conformal_adm_momentum_y,
+qlm_conformal_adm_momentum_z
+
+The exact code can be written
+
+    P_a^cADM[S] = (1/(8 pi)) integral_Scoord chi^(-3/2)
+        [tilde_A^i_a - (2/3) delta^i_a K] dSigma_i
+
+      = (1/(8 pi)) integral_Scoord chi^(-3/2)
+        [gamma^ik K_ka - delta^i_a K] dSigma_i.
+
+These are coordinate covector components (the free index is the second index
+of the mixed curvature tensor).  They are finite-radius conformal diagnostics,
+not invariant local linear momentum.
+
+qlm_conformal_adm_angular_momentum_x,
+qlm_conformal_adm_angular_momentum_y,
+qlm_conformal_adm_angular_momentum_z
+
+With X^i=x^i-x_0^i, the exact implemented expression is
+
+    J_a^cADM[S] = (1/(8 pi)) integral_Scoord chi^(-3/2)
+        epsilon^a_cl X^c tilde_A^i_l dSigma_i.
+
+Unlike the earlier qlm_adm_angular_momentum family, this uses coordinates
+relative to qlm_origin.  It is a conformal coordinate-surface diagnostic of
+angular momentum and is coordinate/origin dependent at finite radius.
+
+
+COVARIANT-INDEX QUASI-LOCAL LINEAR MOMENTUM
+-------------------------------------------
+
+qlm_quasilocal_momentum_covariant_x,
+qlm_quasilocal_momentum_covariant_y,
+qlm_quasilocal_momentum_covariant_z
+
+    P_a^QL[S] = (1/(8 pi)) integral_S
+                    (K_ab - gamma_ab K) s^b dA.
+
+These are the Cartesian-coordinate covector components of the Brown-York/ADM
+momentum surface density contracted with coordinate translations.  They use
+the physical unit normal and physical area, unlike the conformal family.  The
+word "covariant" refers to the lower free coordinate index a; it does not make
+the three numbers coordinate invariant or define a unique linear momentum on
+an arbitrary curved finite surface.  Raising this result after integration is
+not generally the same operation as qlm_adm_momentum, whose index is raised
+pointwise with gamma^ij.
+
+These correspond to the quasi-local linear momentum defined in https://arxiv.org/pdf/0707.0876
+
+
+WEINBERG PSEUDOTENSOR DIAGNOSTICS
+---------------------------------
+
+For these formulas h_mu_nu=g_mu_nu-eta_mu_nu, comma-alpha denotes a coordinate
+derivative, and spatial repeated k is summed.  As noted above, this routine
+forces g_00=-1, g_0i=0 and partial_0 gamma_ij=-2K_ij.  Consequently h_0mu=0 in
+the actual calculation.
+
+qlm_w_energy
+
+    E_W[S] = -(1/(16 pi)) integral_S
+                  (h_jj,i - h_ij,j) s^i dA.
+
+This is Weinberg's energy pseudotensor surface expression evaluated on S.  It
+is coordinate/background dependent at finite radius; asymptotically suitable
+coordinates are needed for interpretation as total energy.
+
+qlm_w_momentum_x, qlm_w_momentum_y, qlm_w_momentum_z
+
+For component a, the literal expression accumulated by the code is
+
+    P_W^a[S] = -(1/(16 pi)) integral_S { [
+        -h_bb,0 + h_b0,b ] s^a
+        + [ -h_a0,b + h_ba,0 ] s^b } dA.
+
+Under the routine's enforced h_0mu=0 and h_ij,0=-2K_ij, this reduces to
+
+    P_W^a[S] = (1/(8 pi)) integral_S
+                    (K_ab - K delta_ab) s^b dA.
+
+It is a Weinberg-pseudotensor momentum diagnostic, with lower/upper Cartesian
+placement indistinguishable only relative to the flat background delta_ab.
+
+qlm_w_angular_momentum_x, qlm_w_angular_momentum_y,
+qlm_w_angular_momentum_z
+
+First the code computes the antisymmetric tensor
+
+    J_W^(ab)[S] = -(1/(16 pi)) integral_S s^c [
+        -x^a h_0b,c + x^b h_0a,c
+        +x^a h_bc,0 - x^b h_ac,0
+        +h_0b delta_ca - h_0a delta_cb ] dA,
+
+then outputs
+
+    (J_W^x,J_W^y,J_W^z) = (J_W^(yz),J_W^(zx),J_W^(xy)).
+
+With the enforced h_0mu=0 and h_ij,0=-2K_ij, only the two time-derivative
+terms survive.  The x^i here are absolute grid coordinates, not relative to
+qlm_origin.  This is Weinberg pseudotensor angular momentum and is coordinate,
+background, and origin dependent on a finite surface.
+
+
+QUICK INTERPRETIVE SUMMARY
+--------------------------
+
+Intrinsic surface geometry:
+    qlm_area, qlm_radius, qlm_irreducible_mass.
+
+Preferred horizon mass/spin when a trustworthy axial field exists:
+    qlm_spin and the derived qlm_mass.
+
+Cross-checks/alternatives for horizon spin:
+    qlm_npspin, qlm_wsspin, and coordinate-dependent qlm_coordspin{x,y,z}.
+    qlm_cvspin is currently nonfunctional (always zero).
+
+Shape-only Kerr estimates:
+    qlm_spin_guess, qlm_mass_guess.
+
+Asymptotic-charge diagnostics evaluated on the chosen finite surface:
+    qlm_adm_*, qlm_conformal_adm_*, and qlm_w_*.
+
+Finite-surface coordinate components of a physical-normal momentum integral:
+    qlm_quasilocal_momentum_covariant_*.
+
+
+IMPLEMENTATION AND LITERATURE POINTERS
+--------------------------------------
+
+Local implementation (authoritative for this adapted copy):
+    src/qlm_analyse.F90
+    src/qlm_killing_transport.F90
+    src/qlm_killing_transportation.F90
+    src/qlm_killing_normalise.F90
+    src/qlm_coordinates.F90
+    ../TGRtensor/src/adm_metric_simple.F90
+
+Upstream Einstein Toolkit thorn guide:
+    https://einsteintoolkit.org/thornguide/EinsteinAnalysis/
+           QuasiLocalMeasures/documentation.html
+
+Isolated-horizon spin and multipoles:
+    O. Dreyer, B. Krishnan, D. Shoemaker, E. Schnetter,
+    Phys. Rev. D 67, 024018 (2003), arXiv:gr-qc/0206008,
+    https://doi.org/10.1103/PhysRevD.67.024018
+
+    E. Schnetter, B. Krishnan, F. Beyer,
+    Phys. Rev. D 74, 024028 (2006), arXiv:gr-qc/0604015,
+    https://doi.org/10.1103/PhysRevD.74.024028
+
+Coordinate quasilocal spin comparisons:
+    G. Lovelace et al., Phys. Rev. D 82, 064031 (2010),
+    arXiv:0907.0869, https://doi.org/10.1103/PhysRevD.82.064031
+
+The source comments attribute its conventional ADM formulas to Appendix A of
+M. Alcubierre, Introduction to 3+1 Numerical Relativity, and its Weinberg
+formulas to section 7.6 of S. Weinberg, Gravitation and Cosmology.  For every
+adapted/new output, the formulas above follow the checked-in code, including
+its finite-surface measure choices, chi floor, coordinate origins, and
+lapse/shift simplification.
