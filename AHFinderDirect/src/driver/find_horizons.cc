@@ -318,6 +318,9 @@ void promote_candidate_slot(const int candidate_hn)
 
 //******************************************************************************
 
+// Record a merger once its candidate common horizon has converged.  Each
+// record identifies when the merger was found, the newly confirmed daughter
+// horizon, the discovery method, and the daughter horizon's parents.
 namespace {
 void write_merger_event(CCTK_ARGUMENTS, const int daughter_hn)
 {
@@ -365,8 +368,9 @@ void write_merger_event(CCTK_ARGUMENTS, const int daughter_hn)
       }
       if (initialize_file != NULL) {
         fprintf(initialize_file,
-                "# iteration time daughter discovery_method nparents "
-                "parent_horizons...\n");
+                "# %-10s %-24s %-10s %-18s %-10s %s\n",
+                "iteration", "time", "daughter", "discovery_method",
+                "nparents", "parent_horizons...");
         if (fclose(initialize_file) != 0) {
           CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
                      "Error closing merger-event file \"%s\"", file_name);
@@ -405,7 +409,7 @@ void write_merger_event(CCTK_ARGUMENTS, const int daughter_hn)
         CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
                    "Cannot append to merger-event file \"%s\"", file_name);
       }
-      fprintf(append_file, "%d %.17g %d %d %d",
+      fprintf(append_file, "  %-10d %-24.17g %-10d %-18d %-10d",
               int(cctk_iteration), double(cctk_time), daughter_hn,
               int(daughter.candidate_method),
               int(daughter.parent_horizons.size()));
