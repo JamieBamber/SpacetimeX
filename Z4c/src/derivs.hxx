@@ -407,6 +407,82 @@ CCTK_ATTRIBUTE_NOINLINE void calc_derivs2(
                    layout);
 }
 
+// GF3D2ptr is used by kernels with many captured grid functions to keep their
+// argument blocks below device limits.  Derivative kernels need the layout as
+// well, but capture only a few grid functions, so reconstruct the conventional
+// views at their launch boundary.  This changes launch metadata only; accesses
+// and arithmetic in the derivative kernels remain unchanged.
+template <typename T>
+CCTK_ATTRIBUTE_NOINLINE void calc_derivs(
+    const cGH *restrict const cctkGH, const GF3D2ptr<const T> &gf0_,
+    const GF3D5<T> &gf_, const vec<GF3D5<T>, dim> &dgf_,
+    const GF3D5layout &layout) {
+  const GF3D2layout layout0(cctkGH, array<int, dim>{0, 0, 0});
+  calc_derivs(cctkGH, GF3D2<const T>(layout0, gf0_.ptr), gf_, dgf_, layout);
+}
+
+template <typename T>
+CCTK_ATTRIBUTE_NOINLINE void calc_derivs2(
+    const cGH *restrict const cctkGH, const GF3D2ptr<const T> &gf0_,
+    const GF3D5<T> &gf_, const vec<GF3D5<T>, dim> &dgf_,
+    const smat<GF3D5<T>, dim> &ddgf_, const GF3D5layout &layout) {
+  const GF3D2layout layout0(cctkGH, array<int, dim>{0, 0, 0});
+  calc_derivs2(cctkGH, GF3D2<const T>(layout0, gf0_.ptr), gf_, dgf_, ddgf_,
+               layout);
+}
+
+template <typename T>
+CCTK_ATTRIBUTE_NOINLINE void calc_derivs(
+    const cGH *restrict const cctkGH,
+    const vec<GF3D2ptr<const T>, dim> &gf0_, const vec<GF3D5<T>, dim> &gf_,
+    const vec<vec<GF3D5<T>, dim>, dim> &dgf_,
+    const GF3D5layout &layout) {
+  const GF3D2layout layout0(cctkGH, array<int, dim>{0, 0, 0});
+  const vec<GF3D2<const T>, dim> gf0(
+      [&](int a) { return GF3D2<const T>(layout0, gf0_(a).ptr); });
+  calc_derivs(cctkGH, gf0, gf_, dgf_, layout);
+}
+
+template <typename T>
+CCTK_ATTRIBUTE_NOINLINE void calc_derivs2(
+    const cGH *restrict const cctkGH,
+    const vec<GF3D2ptr<const T>, dim> &gf0_, const vec<GF3D5<T>, dim> &gf_,
+    const vec<vec<GF3D5<T>, dim>, dim> &dgf_,
+    const vec<smat<GF3D5<T>, dim>, dim> &ddgf_,
+    const GF3D5layout &layout) {
+  const GF3D2layout layout0(cctkGH, array<int, dim>{0, 0, 0});
+  const vec<GF3D2<const T>, dim> gf0(
+      [&](int a) { return GF3D2<const T>(layout0, gf0_(a).ptr); });
+  calc_derivs2(cctkGH, gf0, gf_, dgf_, ddgf_, layout);
+}
+
+template <typename T>
+CCTK_ATTRIBUTE_NOINLINE void calc_derivs(
+    const cGH *restrict const cctkGH,
+    const smat<GF3D2ptr<const T>, dim> &gf0_, const smat<GF3D5<T>, dim> &gf_,
+    const smat<vec<GF3D5<T>, dim>, dim> &dgf_,
+    const GF3D5layout &layout) {
+  const GF3D2layout layout0(cctkGH, array<int, dim>{0, 0, 0});
+  const smat<GF3D2<const T>, dim> gf0([&](int a, int b) {
+    return GF3D2<const T>(layout0, gf0_(a, b).ptr);
+  });
+  calc_derivs(cctkGH, gf0, gf_, dgf_, layout);
+}
+
+template <typename T>
+CCTK_ATTRIBUTE_NOINLINE void calc_derivs2(
+    const cGH *restrict const cctkGH,
+    const smat<GF3D2ptr<const T>, dim> &gf0_, const smat<GF3D5<T>, dim> &gf_,
+    const smat<vec<GF3D5<T>, dim>, dim> &dgf_,
+    const smat<smat<GF3D5<T>, dim>, dim> &ddgf_,
+    const GF3D5layout &layout) {
+  const GF3D2layout layout0(cctkGH, array<int, dim>{0, 0, 0});
+  const smat<GF3D2<const T>, dim> gf0([&](int a, int b) {
+    return GF3D2<const T>(layout0, gf0_(a, b).ptr);
+  });
+  calc_derivs2(cctkGH, gf0, gf_, dgf_, ddgf_, layout);
+}
+
 template <typename T>
 CCTK_ATTRIBUTE_NOINLINE void
 apply_upwind_diss(const cGH *restrict const cctkGH, const GF3D2<const T> &gf_,
@@ -451,6 +527,20 @@ apply_upwind_diss(const cGH *restrict const cctkGH, const GF3D2<const T> &gf_,
           gf_rhs_.store(mask, p.I, rhs_new);
         });
   }
+}
+
+template <typename T>
+CCTK_ATTRIBUTE_NOINLINE void apply_upwind_diss(
+    const cGH *restrict const cctkGH, const GF3D2ptr<const T> &gf_,
+    const vec<GF3D2ptr<const T>, dim> &gf_betaG_,
+    const GF3D2ptr<T> &gf_rhs_,
+    const CCTK_REAL advection_coefficient = 1.0) {
+  const GF3D2layout layout(cctkGH, array<int, dim>{0, 0, 0});
+  const vec<GF3D2<const T>, dim> gf_betaG([&](int a) {
+    return GF3D2<const T>(layout, gf_betaG_(a).ptr);
+  });
+  apply_upwind_diss(cctkGH, GF3D2<const T>(layout, gf_.ptr), gf_betaG,
+                    GF3D2<T>(layout, gf_rhs_.ptr), advection_coefficient);
 }
 
 } // namespace Z4c

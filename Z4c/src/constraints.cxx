@@ -49,39 +49,39 @@ extern "C" void Z4c_Constraints(CCTK_ARGUMENTS) {
   const GF3D2layout layout1(cctkGH, indextype);
   const GF3D5layout layout0(imin, imax);
 
-  const GF3D2<const CCTK_REAL> gf_chi1(layout1, chi);
+  const GF3D2ptr<const CCTK_REAL> gf_chi1(layout1, chi);
 
-  const smat<GF3D2<const CCTK_REAL>, 3> gf_gammat1{
-      GF3D2<const CCTK_REAL>(layout1, gammatxx),
-      GF3D2<const CCTK_REAL>(layout1, gammatxy),
-      GF3D2<const CCTK_REAL>(layout1, gammatxz),
-      GF3D2<const CCTK_REAL>(layout1, gammatyy),
-      GF3D2<const CCTK_REAL>(layout1, gammatyz),
-      GF3D2<const CCTK_REAL>(layout1, gammatzz)};
+  const smat<GF3D2ptr<const CCTK_REAL>, 3> gf_gammat1{
+      GF3D2ptr<const CCTK_REAL>(layout1, gammatxx),
+      GF3D2ptr<const CCTK_REAL>(layout1, gammatxy),
+      GF3D2ptr<const CCTK_REAL>(layout1, gammatxz),
+      GF3D2ptr<const CCTK_REAL>(layout1, gammatyy),
+      GF3D2ptr<const CCTK_REAL>(layout1, gammatyz),
+      GF3D2ptr<const CCTK_REAL>(layout1, gammatzz)};
 
-  const GF3D2<const CCTK_REAL> gf_Kh1(layout1, Kh);
+  const GF3D2ptr<const CCTK_REAL> gf_Kh1(layout1, Kh);
 
-  const smat<GF3D2<const CCTK_REAL>, 3> gf_At1{
-      GF3D2<const CCTK_REAL>(layout1, Atxx),
-      GF3D2<const CCTK_REAL>(layout1, Atxy),
-      GF3D2<const CCTK_REAL>(layout1, Atxz),
-      GF3D2<const CCTK_REAL>(layout1, Atyy),
-      GF3D2<const CCTK_REAL>(layout1, Atyz),
-      GF3D2<const CCTK_REAL>(layout1, Atzz)};
+  const smat<GF3D2ptr<const CCTK_REAL>, 3> gf_At1{
+      GF3D2ptr<const CCTK_REAL>(layout1, Atxx),
+      GF3D2ptr<const CCTK_REAL>(layout1, Atxy),
+      GF3D2ptr<const CCTK_REAL>(layout1, Atxz),
+      GF3D2ptr<const CCTK_REAL>(layout1, Atyy),
+      GF3D2ptr<const CCTK_REAL>(layout1, Atyz),
+      GF3D2ptr<const CCTK_REAL>(layout1, Atzz)};
 
-  const vec<GF3D2<const CCTK_REAL>, 3> gf_Gamt1{
-      GF3D2<const CCTK_REAL>(layout1, Gamtx),
-      GF3D2<const CCTK_REAL>(layout1, Gamty),
-      GF3D2<const CCTK_REAL>(layout1, Gamtz)};
+  const vec<GF3D2ptr<const CCTK_REAL>, 3> gf_Gamt1{
+      GF3D2ptr<const CCTK_REAL>(layout1, Gamtx),
+      GF3D2ptr<const CCTK_REAL>(layout1, Gamty),
+      GF3D2ptr<const CCTK_REAL>(layout1, Gamtz)};
 
-  const GF3D2<const CCTK_REAL> gf_Theta1(layout1, Theta);
+  const GF3D2ptr<const CCTK_REAL> gf_Theta1(layout1, Theta);
 
-  const GF3D2<const CCTK_REAL> gf_alphaG1(layout1, alphaG);
+  const GF3D2ptr<const CCTK_REAL> gf_alphaG1(layout1, alphaG);
 
-  const vec<GF3D2<const CCTK_REAL>, 3> gf_betaG1{
-      GF3D2<const CCTK_REAL>(layout1, betaGx),
-      GF3D2<const CCTK_REAL>(layout1, betaGy),
-      GF3D2<const CCTK_REAL>(layout1, betaGz)};
+  const vec<GF3D2ptr<const CCTK_REAL>, 3> gf_betaG1{
+      GF3D2ptr<const CCTK_REAL>(layout1, betaGx),
+      GF3D2ptr<const CCTK_REAL>(layout1, betaGy),
+      GF3D2ptr<const CCTK_REAL>(layout1, betaGz)};
 
   //
 
@@ -148,34 +148,34 @@ extern "C" void Z4c_Constraints(CCTK_ARGUMENTS) {
 
   //
 
-  const GF3D2<const CCTK_REAL> gf_eTtt1(layout1, eTtt);
+  const GF3D2ptr<const CCTK_REAL> gf_eTtt1(layout1, eTtt);
 
-  const vec<GF3D2<const CCTK_REAL>, 3> gf_eTti1{
-      GF3D2<const CCTK_REAL>(layout1, eTtx),
-      GF3D2<const CCTK_REAL>(layout1, eTty),
-      GF3D2<const CCTK_REAL>(layout1, eTtz)};
+  const vec<GF3D2ptr<const CCTK_REAL>, 3> gf_eTti1{
+      GF3D2ptr<const CCTK_REAL>(layout1, eTtx),
+      GF3D2ptr<const CCTK_REAL>(layout1, eTty),
+      GF3D2ptr<const CCTK_REAL>(layout1, eTtz)};
 
-  const smat<GF3D2<const CCTK_REAL>, 3> gf_eTij1{
-      GF3D2<const CCTK_REAL>(layout1, eTxx),
-      GF3D2<const CCTK_REAL>(layout1, eTxy),
-      GF3D2<const CCTK_REAL>(layout1, eTxz),
-      GF3D2<const CCTK_REAL>(layout1, eTyy),
-      GF3D2<const CCTK_REAL>(layout1, eTyz),
-      GF3D2<const CCTK_REAL>(layout1, eTzz)};
+  const smat<GF3D2ptr<const CCTK_REAL>, 3> gf_eTij1{
+      GF3D2ptr<const CCTK_REAL>(layout1, eTxx),
+      GF3D2ptr<const CCTK_REAL>(layout1, eTxy),
+      GF3D2ptr<const CCTK_REAL>(layout1, eTxz),
+      GF3D2ptr<const CCTK_REAL>(layout1, eTyy),
+      GF3D2ptr<const CCTK_REAL>(layout1, eTyz),
+      GF3D2ptr<const CCTK_REAL>(layout1, eTzz)};
 
   //
 
-  const vec<GF3D2<CCTK_REAL>, 3> gf_ZtC1{GF3D2<CCTK_REAL>(layout1, ZtCx),
-                                         GF3D2<CCTK_REAL>(layout1, ZtCy),
-                                         GF3D2<CCTK_REAL>(layout1, ZtCz)};
+  const vec<GF3D2ptr<CCTK_REAL>, 3> gf_ZtC1{GF3D2ptr<CCTK_REAL>(layout1, ZtCx),
+                                         GF3D2ptr<CCTK_REAL>(layout1, ZtCy),
+                                         GF3D2ptr<CCTK_REAL>(layout1, ZtCz)};
 
-  const GF3D2<CCTK_REAL> gf_HC1(layout1, HC);
+  const GF3D2ptr<CCTK_REAL> gf_HC1(layout1, HC);
 
-  const vec<GF3D2<CCTK_REAL>, 3> gf_MtC1{GF3D2<CCTK_REAL>(layout1, MtCx),
-                                         GF3D2<CCTK_REAL>(layout1, MtCy),
-                                         GF3D2<CCTK_REAL>(layout1, MtCz)};
+  const vec<GF3D2ptr<CCTK_REAL>, 3> gf_MtC1{GF3D2ptr<CCTK_REAL>(layout1, MtCx),
+                                         GF3D2ptr<CCTK_REAL>(layout1, MtCy),
+                                         GF3D2ptr<CCTK_REAL>(layout1, MtCz)};
 
-  const GF3D2<CCTK_REAL> gf_allC1(layout1, allC);
+  const GF3D2ptr<CCTK_REAL> gf_allC1(layout1, allC);
 
   //
 

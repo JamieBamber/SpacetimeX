@@ -1,3 +1,11 @@
+#if defined(__CUDACC__) || defined(__HIPCC__) || defined(SYCL_LANGUAGE_VERSION)
+// Keep GPU kernel descriptors compact; CCTK_DEBUG only adds bounds checks and
+// metadata and does not alter the numerical calculation.
+#ifdef CCTK_DEBUG
+#undef CCTK_DEBUG
+#endif
+#endif
+
 #include "derivs.hxx"
 #include "physics.hxx"
 
