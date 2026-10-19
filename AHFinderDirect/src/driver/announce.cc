@@ -53,6 +53,69 @@ namespace AHFinderDirect
 //
 extern struct state state;
 
+namespace {
+
+// Rebuild the merger hierarchy's mass bookkeeping from the current physical
+// puncture masses.  This deliberately supersedes the checkpointed ah_mass
+// values, whose old meaning was the BHClusterX bare mass.  Dynamic horizons
+// retain the sum of all of their ancestor puncture masses.
+fp restore_hierarchy_mass(const int hn, const CCTK_REAL puncture_mass[],
+                          const int npunctures,
+                          std::vector<int>& visit_state)
+{
+  if (hn < 1 || hn >= int(visit_state.size()))
+    CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+               "Invalid horizon number %d while restoring merger masses", hn);
+
+  if (visit_state[hn] == 1)
+    CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+               "Cyclic parent hierarchy while restoring mass for horizon %d",
+               hn);
+  if (visit_state[hn] == 2)
+    return state.AH_data_array[hn]->mass;
+
+  visit_state[hn] = 1;
+  struct AH_data& horizon = *state.AH_data_array[hn];
+  if (horizon.status == horizon_status__unused) {
+    horizon.mass = 0.0;
+  } else if (horizon.status == horizon_status__individual) {
+    if (hn > npunctures)
+      CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+                 "Individual horizon %d has no corresponding puncture mass "
+                 "(BHClusterX::npunctures=%d)", hn, npunctures);
+    horizon.mass = puncture_mass[hn - 1];
+  } else {
+    if (horizon.parent_horizons.empty())
+      CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+                 "Dynamic horizon %d has no parents while restoring its "
+                 "puncture mass", hn);
+    fp total_mass = 0.0;
+    for (std::vector<int>::const_iterator parent_hn =
+             horizon.parent_horizons.begin();
+         parent_hn != horizon.parent_horizons.end(); ++parent_hn)
+      total_mass += restore_hierarchy_mass(*parent_hn, puncture_mass,
+                                           npunctures, visit_state);
+    if (!isfinite(total_mass) || total_mass <= 0.0)
+      CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+                 "Dynamic horizon %d has invalid restored puncture mass %g",
+                 hn, double(total_mass));
+    horizon.mass = total_mass;
+  }
+  visit_state[hn] = 2;
+  return horizon.mass;
+}
+
+void restore_hierarchy_masses(const int N_horizons,
+                              const CCTK_REAL puncture_mass[],
+                              const int npunctures)
+{
+  std::vector<int> visit_state(N_horizons + 1, 0);
+  for (int hn = 1; hn <= N_horizons; ++hn)
+    restore_hierarchy_mass(hn, puncture_mass, npunctures, visit_state);
+}
+
+} // namespace
+
 //******************************************************************************
 
 //
@@ -194,6 +257,11 @@ for (int hn = 1; hn <= N_horizons; ++ hn)
   BH_diagnostics.load(cctkGH, hn);
 
   }
+
+// ah_mass in an older checkpoint held BHClusterX bare masses.  Always rebuild
+// the hierarchy here from PunctureTracker's physical puncture masses instead.
+if (read_from_BHClusterX)
+  restore_hierarchy_masses(N_horizons, puncture_mass, npunctures);
 
 // Candidate initial guesses are derived from their recovered parents rather
 // than checkpointed separately.  This must be done only after all slots have

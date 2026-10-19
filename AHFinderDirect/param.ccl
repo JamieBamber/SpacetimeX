@@ -39,13 +39,18 @@ USES INT num_extraction_surface
 USES INT maxntheta
 USES INT maxnphi
 
-# Initial individual horizons and their proxy masses come from BHClusterX.
+# BHClusterX provides the initial locations and bare masses used to construct
+# the initial-data guesses.  PunctureTracker provides the physical puncture
+# masses used by the dynamical merger hierarchy.
 SHARES: BHClusterX
 USES INT npunctures
 USES REAL mass
 USES REAL posx
 USES REAL posy
 USES REAL posz
+
+SHARES: PunctureTracker
+USES REAL puncture_mass
 
 # all remaining parameters are private to this thorn
 private:
@@ -148,6 +153,40 @@ boolean merger_allow_group_mergers \
   STEERABLE=always
 {
 } "true"
+
+boolean promote_common_parent_surface \
+  "promote a failed merger candidate when all of its parents converge to the same plausible common surface" \
+  STEERABLE=always
+{
+} "false"
+
+real common_parent_surface_centroid_tolerance \
+  "maximum parent-centroid separation in units of the shared surface's areal radius" \
+  STEERABLE=always
+{
+0.0:* :: "any non-negative relative centroid tolerance"
+} 0.1
+
+real common_parent_surface_area_tolerance \
+  "maximum relative area difference between parent solutions regarded as one shared surface" \
+  STEERABLE=always
+{
+0.0:* :: "any non-negative relative area tolerance"
+} 0.05
+
+real common_parent_surface_mass_min_fraction \
+  "minimum shared irreducible mass divided by the candidate puncture mass" \
+  STEERABLE=always
+{
+0.0:* :: "any non-negative mass fraction"
+} 0.7
+
+real common_parent_surface_mass_max_fraction \
+  "maximum shared irreducible mass divided by the candidate puncture mass" \
+  STEERABLE=always
+{
+0.0:* :: "any non-negative mass fraction"
+} 1.1
 
 boolean merger_search_compact_groups \
   "also search for compact groups of three or more horizons using Method #2" \

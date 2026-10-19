@@ -94,6 +94,9 @@ void do_test_expansion_Jacobians(int my_proc, int N_horizons,
 				 const struct verbose_info& verbose_info,
 				 int timer_handle);
 void promote_candidate_slot(int candidate_hn);
+bool recognize_common_parent_surface(
+    int candidate_hn, fp centroid_tolerance, fp area_tolerance,
+    fp mass_min_fraction, fp mass_max_fraction);
 void write_merger_event(CCTK_ARGUMENTS, int daughter_hn);
 void discover_method1_mergers(CCTK_ARGUMENTS);
 void discover_method2_mergers(CCTK_ARGUMENTS);
@@ -323,6 +326,137 @@ void promote_candidate_slot(const int candidate_hn)
 
 //******************************************************************************
 
+// A merger candidate can fail to converge even though each of its parents has
+// independently converged to the same outer common horizon.  Recognize that
+// situation from AHFinderDirect's own converged surface data.  We deliberately
+// use the immediately available irreducible mass sqrt(A/(16 pi)), rather than
+// QuasiLocalMeasures' delayed spin-dependent Christodoulou mass.
+namespace {
+bool recognize_common_parent_surface(
+    const int candidate_hn, const fp centroid_tolerance,
+    const fp area_tolerance, const fp mass_min_fraction,
+    const fp mass_max_fraction)
+{
+  struct AH_data& candidate = *state.AH_data_array[candidate_hn];
+  if (candidate.status != horizon_status__candidate || candidate.found_flag ||
+      candidate.parent_horizons.size() < 2) {
+    return false;
+  }
+  if (centroid_tolerance < 0.0 || area_tolerance < 0.0 ||
+      mass_min_fraction < 0.0 || mass_max_fraction < mass_min_fraction) {
+    CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
+               "Invalid common-parent-surface tolerances: centroid=%g, "
+               "area=%g, mass=[%g,%g]",
+               double(centroid_tolerance), double(area_tolerance),
+               double(mass_min_fraction), double(mass_max_fraction));
+  }
+  if (!std::isfinite(candidate.mass) || candidate.mass <= 0.0) {
+    return false;
+  }
+
+  const int source_hn = candidate.parent_horizons.front();
+  if (source_hn < 1 || source_hn > state.N_horizons) {
+    return false;
+  }
+  const struct AH_data& source = *state.AH_data_array[source_hn];
+  if (!source.search_flag || !source.found_flag || !source.has_been_found ||
+      source.inside_confirmed_merger ||
+      (source.status != horizon_status__individual &&
+       source.status != horizon_status__confirmed)) {
+    return false;
+  }
+
+  const struct BH_diagnostics& shared = source.BH_diagnostics;
+  if (!std::isfinite(shared.area) || shared.area <= 0.0 ||
+      !finite_origin(shared.centroid_x, shared.centroid_y,
+                     shared.centroid_z)) {
+    return false;
+  }
+  const fp shared_areal_radius = sqrt(shared.area / (4.0 * PI));
+  const fp shared_irreducible_mass = 0.5 * shared_areal_radius;
+  const fp mass_fraction = shared_irreducible_mass / candidate.mass;
+  if (!std::isfinite(shared_areal_radius) || shared_areal_radius <= 0.0 ||
+      !std::isfinite(mass_fraction) ||
+      mass_fraction < mass_min_fraction ||
+      mass_fraction > mass_max_fraction) {
+    return false;
+  }
+
+  for (std::vector<int>::const_iterator parent_hn =
+           candidate.parent_horizons.begin() + 1;
+       parent_hn != candidate.parent_horizons.end(); ++parent_hn) {
+    if (*parent_hn < 1 || *parent_hn > state.N_horizons) {
+      return false;
+    }
+    const struct AH_data& parent = *state.AH_data_array[*parent_hn];
+    if (!parent.search_flag || !parent.found_flag ||
+        !parent.has_been_found || parent.inside_confirmed_merger ||
+        (parent.status != horizon_status__individual &&
+         parent.status != horizon_status__confirmed)) {
+      return false;
+    }
+    const struct BH_diagnostics& diagnostics = parent.BH_diagnostics;
+    if (!std::isfinite(diagnostics.area) || diagnostics.area <= 0.0 ||
+        !finite_origin(diagnostics.centroid_x, diagnostics.centroid_y,
+                       diagnostics.centroid_z)) {
+      return false;
+    }
+    const fp dx = diagnostics.centroid_x - shared.centroid_x;
+    const fp dy = diagnostics.centroid_y - shared.centroid_y;
+    const fp dz = diagnostics.centroid_z - shared.centroid_z;
+    const fp centroid_distance = sqrt(dx * dx + dy * dy + dz * dz);
+    const fp relative_area_difference =
+        fabs(diagnostics.area - shared.area) / shared.area;
+    if (!std::isfinite(centroid_distance) ||
+        centroid_distance > centroid_tolerance * shared_areal_radius ||
+        !std::isfinite(relative_area_difference) ||
+        relative_area_difference > area_tolerance) {
+      return false;
+    }
+  }
+
+  // The horizon shape was broadcast to every rank after Newton.  Copy it to
+  // the candidate slot as well as its diagnostics, so later surface output
+  // and subsequent Newton solves use the actual common horizon rather than a
+  // merely scalar description of it.
+  patch_system& candidate_ps = *candidate.ps_ptr;
+  const patch_system& source_ps = *source.ps_ptr;
+  if (candidate_ps.ghosted_N_grid_points() !=
+      source_ps.ghosted_N_grid_points()) {
+    if (state.my_proc == 0) {
+      CCTK_VWarn(CCTK_WARN_ALERT, __LINE__, __FILE__, CCTK_THORNSTRING,
+                 "Cannot promote merger candidate %d from common parent "
+                 "surface %d: incompatible angular grids (%d versus %d "
+                 "ghosted points)",
+                 candidate_hn, source_hn,
+                 candidate_ps.ghosted_N_grid_points(),
+                 source_ps.ghosted_N_grid_points());
+    }
+    return false;
+  }
+  const int npoints = candidate_ps.ghosted_N_grid_points();
+  memcpy(candidate_ps.ghosted_gridfn_data(gfns::gfn__h),
+         source_ps.ghosted_gridfn_data(gfns::gfn__h), npoints * sizeof(fp));
+  candidate_ps.origin_x(source_ps.origin_x());
+  candidate_ps.origin_y(source_ps.origin_y());
+  candidate_ps.origin_z(source_ps.origin_z());
+  candidate.BH_diagnostics = shared;
+  candidate.found_flag = true;
+
+  if (state.my_proc == 0) {
+    CCTK_VInfo(
+        CCTK_THORNSTRING,
+        "Recognized common parent surface %d as daughter candidate %d: "
+        "M_irr=%g, M_puncture=%g, ratio=%g",
+        source_hn, candidate_hn, double(shared_irreducible_mass),
+        double(candidate.mass), double(mass_fraction));
+  }
+  return true;
+}
+}
+
+//******************************************************************************
+
 // Record a merger once its candidate common horizon has converged.  Each
 // record identifies when the merger was found, the newly confirmed daughter
 // horizon, the discovery method, and the daughter horizon's parents.
@@ -509,7 +643,7 @@ void discover_method1_mergers(CCTK_ARGUMENTS)
         CCTK_VInfo(
             CCTK_THORNSTRING,
             "Method #1 eligible AH %d: has_been_found=%s, status=%d, "
-            "centroid=(%.17g,%.17g,%.17g), proxy_mass=%.17g",
+            "centroid=(%.17g,%.17g,%.17g), puncture_mass=%.17g",
             hn, AH_data.has_been_found ? "yes" : "no", int(AH_data.status),
             double(AH_data.BH_diagnostics.centroid_x),
             double(AH_data.BH_diagnostics.centroid_y),
@@ -658,7 +792,7 @@ void discover_method1_mergers(CCTK_ARGUMENTS)
     if (!isfinite(total_mass) || total_mass <= 0.0) {
       CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
                  "Method #1 proposed a merger group with invalid total "
-                 "proxy mass %g",
+                 "puncture mass %g",
                  double(total_mass));
     }
     center_x /= total_mass;
@@ -681,7 +815,7 @@ void discover_method1_mergers(CCTK_ARGUMENTS)
     if (state.my_proc == 0) {
       CCTK_VInfo(CCTK_THORNSTRING,
                  "Created Method #1 merger candidate horizon %d with "
-                 "%d parents, proxy mass %g, and initial radius %g",
+                 "%d parents, puncture mass %g, and initial radius %g",
                  candidate_hn, int(group->size()), double(total_mass),
                  double(candidate_radius));
     }
@@ -786,7 +920,7 @@ void discover_method2_mergers(CCTK_ARGUMENTS)
       if (!isfinite(total_mass) || total_mass <= 0.0) {
         CCTK_VWarn(FATAL_ERROR, __LINE__, __FILE__, CCTK_THORNSTRING,
                    "Method #2 proposed a group with invalid total proxy "
-                   "mass %g",
+                   "puncture mass %g",
                    double(total_mass));
       }
 
@@ -883,7 +1017,7 @@ void discover_method2_mergers(CCTK_ARGUMENTS)
       if (state.my_proc == 0) {
         CCTK_VInfo(CCTK_THORNSTRING,
                    "Created Method #2 merger candidate horizon %d with %d "
-                   "parents, proxy mass %g, enclosing radius %g, and "
+                   "parents, puncture mass %g, enclosing radius %g, and "
                    "initial radius %g",
                    candidate_hn, int(group.size()), double(total_mass),
                    double(enclosing_radius), double(candidate_radius));
@@ -1400,6 +1534,17 @@ case method__find_horizons:
 	           AH_data.status == horizon_status__candidate)
 	     then ++AH_data.candidate_failed_searches;
 	  }
+	if (promote_common_parent_surface) {
+	  for (int hn = 1; hn <= N_horizons; ++hn) {
+	    if (recognize_common_parent_surface(
+	            hn, common_parent_surface_centroid_tolerance,
+	            common_parent_surface_area_tolerance,
+	            common_parent_surface_mass_min_fraction,
+	            common_parent_surface_mass_max_fraction)) {
+	      converged_candidates.push_back(hn);
+	    }
+	  }
+	}
 	std::sort(converged_candidates.begin(), converged_candidates.end(),
 	          [](const int a, const int b) {
 	            const std::size_t size_a =

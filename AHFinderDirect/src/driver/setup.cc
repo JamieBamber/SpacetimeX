@@ -1061,8 +1061,13 @@ extern "C"
   	        ? horizon_status__unused
   	        : horizon_status__individual;
   	AH_data.inside_confirmed_merger = false;
-  	AH_data.mass =
-  	    read_from_BHClusterX && hn <= npunctures ? mass[hn-1] : 0.0;
+	// This is the mass used by the dynamical merger hierarchy, not the
+	// BHClusterX bare mass used for the initial-data construction.  A daughter
+	// horizon receives the sum of these physical puncture masses from its
+	// parents in initialize_candidate_slot().
+	AH_data.mass = read_from_BHClusterX && hn <= npunctures
+	                   ? puncture_mass[hn-1]
+	                   : 0.0;
   	AH_data.parent_horizons.clear();
 	AH_data.candidate_method = candidate_discovery_method__none;
   	AH_data.candidate_creation_iteration = -1;
