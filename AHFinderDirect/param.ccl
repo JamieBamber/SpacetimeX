@@ -245,9 +245,10 @@ string merger_event_file_name \
 
 #
 # These parameters control which schedule bin (or even bins, if you
-# want) AHFinderDirect runs in.  Historically, Erik's branch of
-# AHFinderDirect has run at CCTK_POSTSTEP.  However, for some purposes
-# it's more convenient to run at CCTK_ANALYSIS and/or CCTK_POSTINITIAL.
+# want) AHFinderDirect runs in.  The default is CCTK_POSTSTEP.  The
+# standard Cactus main loop traverses CCTK_POSTSTEP before CCTK_ANALYSIS,
+# so consumers of SphericalSurface data scheduled at CCTK_ANALYSIS (in
+# particular QuasiLocalMeasures) see AH shapes found on the current slice.
 #
 # In general we need to run at CCTK_POST_RECOVER_VARIABLES, since
 # (a) parameters may have been steered at recovery, so we may need
