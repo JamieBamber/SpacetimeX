@@ -97,6 +97,23 @@ CCTK_INT WeylScal4_psi4_calc_4th_calc_every "WeylScal4_psi4_calc_4th_calc_every"
 } 1
 
 restricted:
+CCTK_BOOLEAN debug_psi4_trace "Emit per-component diagnostics around the Psi4 calculation (for debugging only)" STEERABLE=ALWAYS
+{
+} no
+
+restricted:
+CCTK_INT debug_psi4_trace_min_level "Lowest AMR level included in debug_psi4_trace" STEERABLE=ALWAYS
+{
+  0:* :: ""
+} 0
+
+restricted:
+CCTK_INT debug_psi4_trace_max_level "Highest AMR level included in debug_psi4_trace; a negative value means no upper bound" STEERABLE=ALWAYS
+{
+  -1:* :: ""
+} -1
+
+restricted:
 CCTK_INT psi4_calc_min_level "Lowest AMR level on which to calculate Psi4; a negative value imposes no lower bound" STEERABLE=ALWAYS
 {
   -1:* :: ""

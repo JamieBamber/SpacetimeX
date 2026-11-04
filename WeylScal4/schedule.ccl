@@ -12,12 +12,16 @@ SCHEDULE GROUP WeylScal4_psi4_sync_group AT postinitial
 {
 } "Synchronize Psi4 after calculating it"
 
-SCHEDULE GROUP WeylScal4_psi4_calc_4th_group AT evol AFTER (ODESolvers_Solve, ODESolvers_Solve_Subcycling)
+# Psi4 must be computed only when every AMR level is at the same physical
+# time.  Scheduling it after the subcycled evolution step would apply the
+# cadence test during individual level advances, leaving fine-level Psi4
+# values stale at output times.
+SCHEDULE GROUP WeylScal4_psi4_calc_4th_group AT analysis BEFORE Multipole_Calc
 {
 } "WeylScal4_psi4_calc_4th_group"
 
-SCHEDULE GROUP WeylScal4_psi4_sync_group AT evol
-  AFTER WeylScal4_psi4_calc_4th_group
+SCHEDULE GROUP WeylScal4_psi4_sync_group AT analysis
+  AFTER WeylScal4_psi4_calc_4th_group BEFORE Multipole_Calc
 {
 } "Synchronize Psi4 after calculating it"
 
@@ -35,4 +39,4 @@ SCHEDULE WeylScal4_SyncPsi4 IN WeylScal4_psi4_sync_group
 {
   LANG: C
   OPTIONS: GLOBAL
-} "Synchronize Psi4 only after an enabled Psi4 calculation"
+} "Synchronize Psi4 only after an enabled synchronized calculation"

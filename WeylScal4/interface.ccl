@@ -4,6 +4,9 @@ implements: WeylScal4
 
 inherits: ADMBaseX CoordinatesX
 
+CCTK_INT FUNCTION CarpetX_AllLevelsSynchronized()
+USES FUNCTION CarpetX_AllLevelsSynchronized
+
 public:
 CCTK_REAL Psi0r_group type=GF timelevels=1 tags='tensortypealias="Scalar" tensorweight=0 tensorparity=1 checkpoint="no"'
 {

@@ -1419,6 +1419,33 @@ if (state.method == method__find_horizons)
 	  set_search_origins_from_punctures(CCTK_PASS_CTOC);
 	}
 
+// A candidate's parents can already be independently tracking the same outer
+// common surface.  This must be checked *before* Newton: a spherical candidate
+// can be outside that surface's Newton basin and diverge before the former
+// post-Newton fallback gets a chance to recognize and promote it.  Promotion
+// copies the converged parent shape, records the merger, encloses the parents,
+// and removes the candidate from this call's Newton work.  On the next
+// horizon-finding call the confirmed daughter is selected normally and is
+// evolved from that copied shape.
+	if (state.method == method__find_horizons &&
+	    promote_common_parent_surface) {
+	  for (int hn = 1; hn <= N_horizons; ++hn) {
+	    if (recognize_common_parent_surface(
+	            hn, common_parent_surface_centroid_tolerance,
+	            common_parent_surface_area_tolerance,
+	            common_parent_surface_mass_min_fraction,
+	            common_parent_surface_mass_max_fraction)) {
+	      promote_candidate_slot(hn);
+	      write_merger_event(CCTK_PASS_CTOC, hn);
+
+	      // find_this was determined before this promotion.  Do not solve the
+	      // freshly promoted daughter a second time in this same call; its
+	      // copied parent surface is already a converged solution on this slice.
+	      state.AH_data_array[hn]->search_flag = false;
+	    }
+	  }
+	}
+
 // Set the initial guess for every horizon this process may own.  In dynamic
 // mode all active processes hold replicated full state; in static mode retain
 // the original per-process horizon sequence.
