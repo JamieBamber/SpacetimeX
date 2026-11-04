@@ -353,6 +353,10 @@ struct	AH_data
 	bool has_been_found;
 	enum horizon_status status;
 	bool inside_confirmed_merger;
+	// Physical mass assigned to this merger-tree node: an individual horizon
+	// carries its PunctureTracker puncture_mass; a daughter carries the sum of
+	// its parents' values.  This is intentionally distinct from a BHClusterX
+	// bare mass used to construct initial data.
 	fp mass;
 	std::vector<int> parent_horizons;
 	enum candidate_discovery_method candidate_method;
