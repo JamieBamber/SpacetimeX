@@ -59,7 +59,14 @@ SCHEDULE GROUP SphericalSurface_HasBeenSet AT basegrid
 
 
 
-SCHEDULE SphericalSurface_Set AT poststep BEFORE SphericalSurface_HasBeenSet
+# Reset analytic/extraction surfaces before AHFinderDirect publishes the
+# dynamically found horizons.  AHFinderDirect_store is also before
+# SphericalSurface_HasBeenSet; without this direct dependency, Cactus may run
+# this reset after the store and erase the current AH surfaces before QLM uses
+# them at CCTK_ANALYSIS.
+SCHEDULE SphericalSurface_Set AT poststep \
+  BEFORE AHFinderDirect_find_horizons \
+  BEFORE SphericalSurface_HasBeenSet
 {
   LANG: C
   OPTIONS: global

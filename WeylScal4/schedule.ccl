@@ -12,12 +12,14 @@ SCHEDULE GROUP WeylScal4_psi4_sync_group AT postinitial
 {
 } "Synchronize Psi4 after calculating it"
 
-SCHEDULE GROUP WeylScal4_psi4_calc_4th_group AT evol AFTER (ODESolvers_Solve, ODESolvers_Solve_Subcycling)
+# Schedule after the evolution work, but before Multipole consumes Psi4.  The
+# routine itself applies the user-selected global cadence.
+SCHEDULE GROUP WeylScal4_psi4_calc_4th_group AT analysis BEFORE Multipole_Calc
 {
 } "WeylScal4_psi4_calc_4th_group"
 
-SCHEDULE GROUP WeylScal4_psi4_sync_group AT evol
-  AFTER WeylScal4_psi4_calc_4th_group
+SCHEDULE GROUP WeylScal4_psi4_sync_group AT analysis
+  AFTER WeylScal4_psi4_calc_4th_group BEFORE Multipole_Calc
 {
 } "Synchronize Psi4 after calculating it"
 

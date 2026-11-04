@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <assert.h>
+#include <float.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,6 +17,78 @@
 #include "Differencing.h"
 
 namespace WeylScal4 {
+
+// This is deliberately a host-side diagnostic.  It is enabled only by
+// debug_psi4_trace and is intended for short runs.  In particular, it lets us
+// distinguish a bad Psi4 kernel result from a bad input/ghost-zone state on a
+// particular CarpetX component.
+static void TracePsi4Block(const cGH *cctkGH, const char *stage,
+                           const int level, const int component,
+                           const int iteration, const CCTK_REAL time,
+                           const int imin[3], const int imax[3],
+                           const int lsh[3], const int ash[3],
+                           const int bbox[6], const int nghostzones[3],
+                           const CCTK_REAL delta[3], const CCTK_REAL *gxx,
+                           const CCTK_REAL *kxx, const CCTK_REAL *x,
+                           const CCTK_REAL *y, const CCTK_REAL *z,
+                           const CCTK_REAL *psi4r,
+                           const CCTK_REAL *psi4i) {
+  CCTK_REAL rmin = DBL_MAX, rmax = -DBL_MAX;
+  CCTK_REAL imin_value = DBL_MAX, imax_value = -DBL_MAX;
+  long long nonfinite_r = 0, nonfinite_i = 0, points = 0;
+
+  for (int k = imin[2]; k < imax[2]; ++k)
+    for (int j = imin[1]; j < imax[1]; ++j)
+      for (int i = imin[0]; i < imax[0]; ++i) {
+        const ptrdiff_t ind = CCTK_GFINDEX3D(cctkGH, i, j, k);
+        const CCTK_REAL r = psi4r[ind];
+        const CCTK_REAL im = psi4i[ind];
+        ++points;
+        if (isfinite(r)) {
+          rmin = std::min(rmin, r);
+          rmax = std::max(rmax, r);
+        } else {
+          ++nonfinite_r;
+        }
+        if (isfinite(im)) {
+          imin_value = std::min(imin_value, im);
+          imax_value = std::max(imax_value, im);
+        } else {
+          ++nonfinite_i;
+        }
+      }
+
+  const int ci = (imin[0] + imax[0] - 1) / 2;
+  const int cj = (imin[1] + imax[1] - 1) / 2;
+  const int ck = (imin[2] + imax[2] - 1) / 2;
+  const ptrdiff_t c = CCTK_GFINDEX3D(cctkGH, ci, cj, ck);
+  const int li = imin[0];
+  const ptrdiff_t l = CCTK_GFINDEX3D(cctkGH, li, cj, ck);
+
+  CCTK_VInfo(
+      CCTK_THORNSTRING,
+      "Psi4 trace %s: it=%d time=%.17g rank=%d level=%d component=%d "
+      "interior=[%d:%d,%d:%d,%d:%d) lsh=(%d,%d,%d) ash=(%d,%d,%d) "
+      "bbox=(%d,%d,%d,%d,%d,%d) nghost=(%d,%d,%d) dx=(%.17g,%.17g,%.17g) "
+      "points=%lld Psi4r=[%.17g,%.17g] nonfinite=%lld "
+      "Psi4i=[%.17g,%.17g] nonfinite=%lld",
+      stage, iteration, time, CCTK_MyProc(cctkGH), level, component,
+      imin[0], imax[0], imin[1], imax[1], imin[2], imax[2], lsh[0], lsh[1],
+      lsh[2], ash[0], ash[1], ash[2], bbox[0], bbox[1], bbox[2], bbox[3],
+      bbox[4], bbox[5], nghostzones[0], nghostzones[1], nghostzones[2],
+      delta[0], delta[1], delta[2], points, rmin, rmax, nonfinite_r, imin_value,
+      imax_value, nonfinite_i);
+  CCTK_VInfo(
+      CCTK_THORNSTRING,
+      "Psi4 trace %s samples: rank=%d level=%d component=%d "
+      "centre=(%d,%d,%d) xyz=(%.17g,%.17g,%.17g) gxx=%.17g kxx=%.17g "
+      "Psi4=(%.17g,%.17g); low-x=(%d,%d,%d) xyz=(%.17g,%.17g,%.17g) "
+      "gxx stencil=[%.17g,%.17g,%.17g,%.17g,%.17g] kxx=%.17g Psi4=(%.17g,%.17g)",
+      stage, CCTK_MyProc(cctkGH), level, component, ci, cj, ck, x[c], y[c],
+      z[c], gxx[c], kxx[c], psi4r[c], psi4i[c], li, cj, ck, x[l], y[l], z[l],
+      gxx[l - 2], gxx[l - 1], gxx[l], gxx[l + 1], gxx[l + 2], kxx[l],
+      psi4r[l], psi4i[l]);
+}
 
 static void WeylScal4_psi4_calc_4th_Body(const cGH* restrict const cctkGH, const int dir, const int face, const CCTK_REAL normal[3], const CCTK_REAL tangentA[3], const CCTK_REAL tangentB[3], const int imin[3], const int imax[3], const int n_subblock_gfs, CCTK_REAL* restrict const subblock_gfs[])
 {
@@ -108,6 +181,19 @@ static void WeylScal4_psi4_calc_4th_Body(const cGH* restrict const cctkGH, const
   const int imax0=std::min(imax[0], cctk_tile_max[0]);
   const int imax1=std::min(imax[1], cctk_tile_max[1]);
   const int imax2=std::min(imax[2], cctk_tile_max[2]);
+  const bool trace = debug_psi4_trace &&
+      cctk_level >= debug_psi4_trace_min_level &&
+      (debug_psi4_trace_max_level < 0 ||
+       cctk_level <= debug_psi4_trace_max_level);
+  const int trace_imin[3] = {imin0, imin1, imin2};
+  const int trace_imax[3] = {imax0, imax1, imax2};
+  const CCTK_REAL trace_delta[3] = {dx, dy, dz};
+  if (trace)
+    TracePsi4Block(cctkGH, "before", cctk_level, cctk_component,
+                   cctk_iteration, cctk_time, trace_imin, trace_imax,
+                   cctk_lsh, cctk_ash, cctk_bbox, cctk_nghostzones,
+                   trace_delta, gxx, kxx, vcoordx,
+                   vcoordy, vcoordz, Psi4r, Psi4i);
   //#pragma omp parallel
   CCTK_LOOP3(WeylScal4_psi4_calc_4th,
     i,j,k, imin0,imin1,imin2, imax0,imax1,imax2,
@@ -926,6 +1012,12 @@ static void WeylScal4_psi4_calc_4th_Body(const cGH* restrict const cctkGH, const
     Psi4r[index] = Psi4rL;
   }
   CCTK_ENDLOOP3(WeylScal4_psi4_calc_4th);
+  if (trace)
+    TracePsi4Block(cctkGH, "after", cctk_level, cctk_component,
+                   cctk_iteration, cctk_time, trace_imin, trace_imax,
+                   cctk_lsh, cctk_ash, cctk_bbox, cctk_nghostzones,
+                   trace_delta, gxx, kxx, vcoordx,
+                   vcoordy, vcoordz, Psi4r, Psi4i);
 }
 extern "C" void WeylScal4_psi4_calc_4th(CCTK_ARGUMENTS)
 {
@@ -940,13 +1032,36 @@ extern "C" void WeylScal4_psi4_calc_4th(CCTK_ARGUMENTS)
   {
     CCTK_VInfo(CCTK_THORNSTRING,"Entering WeylScal4_psi4_calc_4th_Body");
   }
-  if ((psi4_calc_min_level >= 0 && cctk_level < psi4_calc_min_level) ||
-      (psi4_calc_max_level >= 0 && cctk_level > psi4_calc_max_level))
-  {
+  if (WeylScal4_psi4_calc_4th_calc_every == 0) {
+    if (debug_psi4_trace && cctk_level >= debug_psi4_trace_min_level &&
+        (debug_psi4_trace_max_level < 0 ||
+         cctk_level <= debug_psi4_trace_max_level))
+      CCTK_VInfo(CCTK_THORNSTRING,
+                 "Psi4 trace: disabled at it=%d rank=%d level=%d component=%d "
+                 "because WeylScal4_psi4_calc_4th_calc_every=0",
+                 cctk_iteration, CCTK_MyProc(cctkGH), cctk_level,
+                 cctk_component);
     return;
   }
+  const bool trace = debug_psi4_trace &&
+      cctk_level >= debug_psi4_trace_min_level &&
+      (debug_psi4_trace_max_level < 0 ||
+       cctk_level <= debug_psi4_trace_max_level);
+  if (trace)
+    CCTK_VInfo(CCTK_THORNSTRING,
+               "Psi4 trace: entry it=%d time=%.17g rank=%d level=%d "
+               "component=%d cadence=%d offset=%d fdOrder=%d",
+               cctk_iteration, cctk_time, CCTK_MyProc(cctkGH), cctk_level,
+               cctk_component, WeylScal4_psi4_calc_4th_calc_every,
+               WeylScal4_psi4_calc_4th_calc_offset, fdOrder);
   if (cctk_iteration % WeylScal4_psi4_calc_4th_calc_every != WeylScal4_psi4_calc_4th_calc_offset)
   {
+    if (trace)
+      CCTK_VInfo(CCTK_THORNSTRING,
+                 "Psi4 trace: skipped it=%d rank=%d level=%d component=%d "
+                 "because cadence condition is false",
+                 cctk_iteration, CCTK_MyProc(cctkGH), cctk_level,
+                 cctk_component);
     return;
   }
   

@@ -39,10 +39,16 @@ REAL initial_z[100] "Initial z coordinate positions of punctures"
   *:* :: ""
 } 0.0
 
+restricted:
+
+# Physical puncture masses are also used by AHFinderDirect to construct and
+# validate the hierarchical dynamical-horizon merger tree.
 REAL puncture_mass[100] "Mass associated with each tracked puncture"
 {
   (0:* :: "mass must be positive"
 } 1.0
+
+private:
 
 REAL puncture_eta_weight[100] "Weight associated with each tracked puncture for position-dependent eta profiles"
 {
