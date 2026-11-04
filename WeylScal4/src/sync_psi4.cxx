@@ -16,11 +16,6 @@ extern "C" void WeylScal4_SyncPsi4(CCTK_ARGUMENTS) {
   // this check also prevents modulo by zero below.
   if (WeylScal4_psi4_calc_4th_calc_every == 0)
     return;
-  // CCTK_ANALYSIS is entered for subcycled level batches as well.  Synchrony
-  // is required both for a complete Psi4 field and for a meaningful global
-  // ghost exchange.
-  if (!CarpetX_AllLevelsSynchronized())
-    return;
   if (cctk_iteration % WeylScal4_psi4_calc_4th_calc_every !=
       WeylScal4_psi4_calc_4th_calc_offset)
     return;

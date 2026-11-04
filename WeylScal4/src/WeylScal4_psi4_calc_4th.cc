@@ -1054,16 +1054,6 @@ extern "C" void WeylScal4_psi4_calc_4th(CCTK_ARGUMENTS)
                cctk_iteration, cctk_time, CCTK_MyProc(cctkGH), cctk_level,
                cctk_component, WeylScal4_psi4_calc_4th_calc_every,
                WeylScal4_psi4_calc_4th_calc_offset, fdOrder);
-  if (!CarpetX_AllLevelsSynchronized())
-  {
-    if (trace)
-      CCTK_VInfo(CCTK_THORNSTRING,
-                 "Psi4 trace: skipped it=%d rank=%d level=%d component=%d "
-                 "because AMR levels are not synchronized",
-                 cctk_iteration, CCTK_MyProc(cctkGH), cctk_level,
-                 cctk_component);
-    return;
-  }
   if (cctk_iteration % WeylScal4_psi4_calc_4th_calc_every != WeylScal4_psi4_calc_4th_calc_offset)
   {
     if (trace)
