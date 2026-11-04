@@ -41,6 +41,20 @@ CCTK_REAL f_mu_L "mu_L = f_mu_L / alpha" STEERABLE=always
   *:* :: ""
 } 2.0
 
+BOOLEAN slow_start_lapse "Add the slow-start damping term to 1+log slicing" STEERABLE=always
+{
+} no
+
+CCTK_REAL slow_start_lapse_amplitude "Slow-start Gaussian damping amplitude h in inverse code-time units" STEERABLE=always
+{
+  0:* :: "Non-negative damping rate"
+} 0.6
+
+CCTK_REAL slow_start_lapse_timescale "Slow-start Gaussian width sigma in code-time units" STEERABLE=always
+{
+  (0:* :: "Positive Gaussian width"
+} 20.0
+
 CCTK_REAL f_mu_S "mu_S = f_mu_S / alpha^2" STEERABLE=always
 {
   *:* :: ""
