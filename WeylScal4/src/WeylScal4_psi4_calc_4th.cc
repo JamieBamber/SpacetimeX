@@ -1043,6 +1043,12 @@ extern "C" void WeylScal4_psi4_calc_4th(CCTK_ARGUMENTS)
                  cctk_component);
     return;
   }
+  // Retain the user-selected level range.  In particular, this avoids doing
+  // the expensive fourth-order calculation on levels that do not contain an
+  // extraction surface.
+  if ((psi4_calc_min_level >= 0 && cctk_level < psi4_calc_min_level) ||
+      (psi4_calc_max_level >= 0 && cctk_level > psi4_calc_max_level))
+    return;
   const bool trace = debug_psi4_trace &&
       cctk_level >= debug_psi4_trace_min_level &&
       (debug_psi4_trace_max_level < 0 ||

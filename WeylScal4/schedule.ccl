@@ -12,14 +12,18 @@ SCHEDULE GROUP WeylScal4_psi4_sync_group AT postinitial
 {
 } "Synchronize Psi4 after calculating it"
 
-# Schedule after the evolution work, but before Multipole consumes Psi4.  The
-# routine itself applies the user-selected global cadence.
-SCHEDULE GROUP WeylScal4_psi4_calc_4th_group AT analysis BEFORE Multipole_Calc
+# A Psi4 calculation writes only interiors and must be followed by a ghost-zone
+# synchronization.  CarpetX permits synchronization in CCTK_EVOL, but not in
+# CCTK_ANALYSIS.  Schedule both immediately after the selected ODE solver. The
+# global cctk_iteration cadence is consequently applied identically to every
+# active level batch in a coarse iteration; Multipole consumes the completed
+# fields later in CCTK_ANALYSIS.
+SCHEDULE GROUP WeylScal4_psi4_calc_4th_group AT evol AFTER (ODESolvers_Solve, ODESolvers_Solve_Subcycling)
 {
 } "WeylScal4_psi4_calc_4th_group"
 
-SCHEDULE GROUP WeylScal4_psi4_sync_group AT analysis
-  AFTER WeylScal4_psi4_calc_4th_group BEFORE Multipole_Calc
+SCHEDULE GROUP WeylScal4_psi4_sync_group AT evol
+  AFTER WeylScal4_psi4_calc_4th_group
 {
 } "Synchronize Psi4 after calculating it"
 
