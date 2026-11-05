@@ -1,3 +1,4 @@
+#include "derivs.hxx"
 #include "z4c_vars.hxx"
 
 #include <loop_device.hxx>
@@ -88,6 +89,7 @@ extern "C" void Z4c_ADM(CCTK_ARGUMENTS) {
   constexpr size_t vsize = tuple_size_v<vreal>;
 
   const Loop::GridDescBaseDevice grid(cctkGH);
+  const vec<CCTK_REAL, dim> dx([&](int a) { return CCTK_DELTA_SPACE(a); });
 #ifdef __CUDACC__
   const nvtxRangeId_t range = nvtxRangeStartA("Z4c_ADM::adm");
 #endif
@@ -96,9 +98,16 @@ extern "C" void Z4c_ADM(CCTK_ARGUMENTS) {
         const vbool mask = mask_for_loop_tail<vbool>(p.i, p.imax);
         const GF3D2index index1(layout1, p.I);
 
+        const CCTK_REAL r2 = p.x * p.x + p.y * p.y + p.z * p.z;
+        const CCTK_REAL r4 = r2 * r2;
+        const CCTK_REAL is4 =
+            1.0 / (veta_width * veta_width * veta_width * veta_width);
+        const CCTK_REAL eta_local =
+            (veta_central - veta_outer) * exp(-r4 * is4) + veta_outer;
+
         // Load and calculate
         const z4c_vars_noderivs<vreal> vars(
-            set_Theta_zero, kappa1, kappa2, f_mu_L, f_mu_S, eta, //
+            set_Theta_zero, kappa1, kappa2, f_mu_L, f_mu_S, eta_local, //
             gf_chi1(mask, index1), gf_gammat1(mask, index1),
             gf_Kh1(mask, index1), gf_At1(mask, index1), gf_Gamt1(mask, index1),
             gf_Theta1(mask, index1), gf_alphaG1(mask, index1),
@@ -113,6 +122,26 @@ extern "C" void Z4c_ADM(CCTK_ARGUMENTS) {
         gf_dtalp1.store(mask, index1, vars.dtalpha);
         gf_beta1.store(mask, index1, vars.beta);
         gf_dtbeta1.store(mask, index1, vars.dtbeta);
+      });
+
+  // Add the advection terms to the exported gauge time derivatives.
+  grid.loop_int_device<0, 0, 0, vsize>(
+      grid.nghostzones, [=] ARITH_DEVICE(const PointDesc &p) ARITH_INLINE {
+        const vbool mask = mask_for_loop_tail<vbool>(p.i, p.imax);
+        const GF3D2index index1(layout1, p.I);
+        const vec<vreal, dim> betaG = gf_betaG1(mask, index1);
+
+        const vreal dtalpha =
+            gf_dtalp1(mask, index1) +
+            deriv_upwind(mask, gf_alphaG1, p.I, betaG, dx);
+        gf_dtalp1.store(mask, index1, dtalpha);
+
+        for (int a = 0; a < dim; ++a) {
+          const vreal dtbeta =
+              gf_dtbeta1(a)(mask, index1) +
+              deriv_upwind(mask, gf_betaG1(a), p.I, betaG, dx);
+          gf_dtbeta1(a).store(mask, index1, dtbeta);
+        }
       });
 #ifdef __CUDACC__
   nvtxRangeEnd(range);
