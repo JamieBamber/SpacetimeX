@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <assert.h>
+#include <cmath>
 #include <float.h>
 #include <math.h>
 #include <stdio.h>
@@ -12,11 +13,64 @@
 #include <string.h>
 #include "cctk.h"
 #include "cctk_Arguments.h"
+#include "cctk_Parameter.h"
 #include "cctk_Parameters.h"
 #include "Kranc.hh"
 #include "Differencing.h"
 
 namespace WeylScal4 {
+
+// CCTK_EVOL is traversed while individual AMR levels catch up with their
+// finer descendants.  Consequently cctk_iteration identifies the position in
+// that traversal, rather than the common physical output time, when this
+// local kernel is called.  Reconstruct the finest-level tick from cctk_time
+// instead: all levels then select the same physical times for Psi4.
+static int FinestLevelForPsi4Cadence() {
+  static const int finest_level = [] {
+    int type = 0;
+    const void *const max_levels_value =
+        CCTK_ParameterGet("max_num_levels", "CarpetX", &type);
+    if (max_levels_value == nullptr || type != PARAMETER_INT)
+      CCTK_ERROR("Could not query CarpetX::max_num_levels for Psi4 cadence");
+    const int max_num_levels =
+        int(*static_cast<const CCTK_INT *>(max_levels_value));
+    if (max_num_levels < 1)
+      CCTK_VERROR("Invalid CarpetX::max_num_levels=%d", max_num_levels);
+    return max_num_levels - 1;
+  }();
+  return finest_level;
+}
+
+static CCTK_REAL InitialTimeForPsi4Cadence() {
+  static const CCTK_REAL initial_time = [] {
+    int type = 0;
+    const void *const initial_time_value =
+        CCTK_ParameterGet("cctk_initial_time", "Cactus", &type);
+    if (initial_time_value == nullptr || type != PARAMETER_REAL)
+      CCTK_ERROR("Could not query Cactus::cctk_initial_time for Psi4 cadence");
+    return *static_cast<const CCTK_REAL *>(initial_time_value);
+  }();
+  return initial_time;
+}
+
+static long long FinestTimeTick(const cGH *const cctkGH) {
+  const int finest_level = FinestLevelForPsi4Cadence();
+  const CCTK_REAL dt_finest =
+      std::ldexp(cctkGH->cctk_delta_time, -finest_level);
+  if (!(dt_finest > 0) || !std::isfinite(dt_finest))
+    CCTK_VERROR("Invalid finest-level timestep %.17g for Psi4 cadence",
+                double(dt_finest));
+
+  return std::llround((cctkGH->cctk_time - InitialTimeForPsi4Cadence()) /
+                      dt_finest);
+}
+
+static bool CalculatePsi4ThisTime(const cGH *const cctkGH,
+                                  const CCTK_INT calc_every,
+                                  const CCTK_INT calc_offset) {
+  const long long finest_tick = FinestTimeTick(cctkGH);
+  return finest_tick % calc_every == calc_offset;
+}
 
 // This is deliberately a host-side diagnostic.  It is enabled only by
 // debug_psi4_trace and is intended for short runs.  In particular, it lets us
@@ -1056,16 +1110,19 @@ extern "C" void WeylScal4_psi4_calc_4th(CCTK_ARGUMENTS)
   if (trace)
     CCTK_VInfo(CCTK_THORNSTRING,
                "Psi4 trace: entry it=%d time=%.17g rank=%d level=%d "
-               "component=%d cadence=%d offset=%d fdOrder=%d",
+               "component=%d finest_tick=%lld cadence=%d offset=%d fdOrder=%d",
                cctk_iteration, cctk_time, CCTK_MyProc(cctkGH), cctk_level,
-               cctk_component, WeylScal4_psi4_calc_4th_calc_every,
+               cctk_component, FinestTimeTick(cctkGH),
+               WeylScal4_psi4_calc_4th_calc_every,
                WeylScal4_psi4_calc_4th_calc_offset, fdOrder);
-  if (cctk_iteration % WeylScal4_psi4_calc_4th_calc_every != WeylScal4_psi4_calc_4th_calc_offset)
+  if (!CalculatePsi4ThisTime(cctkGH,
+                             WeylScal4_psi4_calc_4th_calc_every,
+                             WeylScal4_psi4_calc_4th_calc_offset))
   {
     if (trace)
       CCTK_VInfo(CCTK_THORNSTRING,
                  "Psi4 trace: skipped it=%d rank=%d level=%d component=%d "
-                 "because cadence condition is false",
+                 "because physical-time cadence condition is false",
                  cctk_iteration, CCTK_MyProc(cctkGH), cctk_level,
                  cctk_component);
     return;
