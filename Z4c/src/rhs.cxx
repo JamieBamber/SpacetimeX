@@ -135,6 +135,12 @@ extern "C" void Z4c_RHS(CCTK_ARGUMENTS) {
   DECLARE_CCTK_ARGUMENTS_Z4c_RHS;
   DECLARE_CCTK_PARAMETERS;
 
+  const CCTK_REAL slow_start_lapse_rate =
+      slow_start_lapse
+          ? slow_start_lapse_amplitude *
+                exp(-0.5 * pow(cctk_time / slow_start_lapse_timescale, 2))
+          : 0.0;
+
   PunctureEtaProfile eta_profile_data;
   array<PunctureEtaSource, max_eta_sources> eta_sources{};
   eta_profile_data.enabled =
@@ -430,9 +436,11 @@ extern "C" void Z4c_RHS(CCTK_ARGUMENTS) {
           const vbool mask = mask_for_loop_tail<vbool>(p.i, p.imax);
           const GF3D2index index1(layout1, p.I);
           const GF3D5index index0(layout0, p.I);
+          const vreal chi_value = gf_chi0(mask, index0);
           const vreal alphaG_value = gf_alphaG0(mask, index0);
+          const vreal alpha = vreal(1) + alphaG_value;
           const vreal lapse =
-              fmax(vreal(alphaG_floor), vreal(1) + alphaG_value);
+              fmax(vreal(alphaG_floor), alpha);
           const vreal kappa1_local =
               covariant_z4_damping ? vreal(kappa1) / lapse : vreal(kappa1);
 
@@ -444,8 +452,7 @@ extern "C" void Z4c_RHS(CCTK_ARGUMENTS) {
           const z4c_vars<vreal> vars(
               set_Theta_zero, kappa1_local, kappa2, f_mu_L, f_mu_S,
               eta_local, //
-              gf_chi0(mask, index0), gf_dchi0(mask, index0),
-              gf_ddchi0(mask, index0), //
+              chi_value, gf_dchi0(mask, index0), gf_ddchi0(mask, index0), //
               gf_gammat0(mask, index0), gf_dgammat0(mask, index0),
               gf_ddgammat0(mask, index0),                        //
               gf_Kh0(mask, index0), gf_dKh0(mask, index0),       //
@@ -465,7 +472,15 @@ extern "C" void Z4c_RHS(CCTK_ARGUMENTS) {
           gf_At_rhs1.store(mask, index1, vars.At_rhs);
           gf_Gamt_rhs1.store(mask, index1, vars.Gamt_rhs);
           gf_Theta_rhs1.store(mask, index1, vars.Theta_rhs);
-          gf_alphaG_rhs1.store(mask, index1, vars.alphaG_rhs);
+          vreal alphaG_rhs_value = vars.alphaG_rhs;
+          if (slow_start_lapse) {
+            // Slow-start lapse, arXiv:2404.01137, Eq. (27). Z4c stores
+            // chi - 1, while W = exp(-2 phi) = sqrt(chi).
+            const vreal W = sqrt(fmax(vreal(chi_floor), vreal(1) + chi_value));
+            alphaG_rhs_value -=
+                W * vreal(slow_start_lapse_rate) * (alpha - W);
+          }
+          gf_alphaG_rhs1.store(mask, index1, alphaG_rhs_value);
           gf_betaG_rhs1.store(mask, index1, vars.betaG_rhs);
         });
   });
