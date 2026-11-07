@@ -1,5 +1,11 @@
 # Schedule definitions for thorn Z4c
 
+SCHEDULE Z4c_ParamCheck AT CCTK_PARAMCHECK
+{
+  LANG: C
+  OPTIONS: GLOBAL
+} "Validate Z4c parameters"
+
 STORAGE: chi[timelevels]
 STORAGE: gamma_tilde[timelevels]
 STORAGE: K_hat[timelevels]

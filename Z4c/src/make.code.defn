@@ -9,6 +9,7 @@ SRCS =						\
 	enforce.cxx				\
 	initial1.cxx				\
 	initial2.cxx				\
+	paramcheck.cxx				\
 	rhs.cxx					\
 	test.cxx
 
