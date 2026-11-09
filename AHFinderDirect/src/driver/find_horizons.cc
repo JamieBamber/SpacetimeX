@@ -119,9 +119,12 @@ bool finite_origin(const fp x, const fp y, const fp z)
   return std::isfinite(x) && std::isfinite(y) && std::isfinite(z);
 }
 
-// Estimate a horizon's current position.  A horizon found on the previous
-// search is the best estimate while it remains active.  Otherwise descend its
-// merger tree until the live punctures underlying the horizon are reached.
+// Estimate a horizon's current position by descending its merger tree to the
+// individual punctures.  In particular, do not use a parent's saved apparent
+// horizon centroid here: it is from the previous AH search and can be badly
+// stale when horizons are found infrequently.  PunctureTracker supplies the
+// current positions, and the hierarchy supplies the corresponding total
+// puncture masses for the mass-weighted centre of a daughter horizon.
 bool hierarchical_origin(const int hn, const CCTK_INT ntracked,
                          const CCTK_REAL* const puncture_x,
                          const CCTK_REAL* const puncture_y,
@@ -165,18 +168,9 @@ bool hierarchical_origin(const int hn, const CCTK_INT ntracked,
       return false;
     }
 
-    const struct AH_data& parent = *state.AH_data_array[*parent_hn];
     origin_estimate parent_estimate;
-    const fp cx = parent.BH_diagnostics.centroid_x;
-    const fp cy = parent.BH_diagnostics.centroid_y;
-    const fp cz = parent.BH_diagnostics.centroid_z;
-    if (parent.search_flag && parent.found_flag && parent.has_been_found &&
-        parent.mass > 0.0 && std::isfinite(parent.mass) &&
-        finite_origin(cx, cy, cz)) {
-      parent_estimate = {cx, cy, cz, parent.mass};
-    } else if (!hierarchical_origin(*parent_hn, ntracked, puncture_x,
-                                    puncture_y, puncture_z, visiting,
-                                    parent_estimate)) {
+    if (!hierarchical_origin(*parent_hn, ntracked, puncture_x, puncture_y,
+                             puncture_z, visiting, parent_estimate)) {
       visiting[hn] = false;
       return false;
     }
@@ -241,17 +235,29 @@ void set_search_origins_from_punctures(CCTK_ARGUMENTS)
                  hn, int(horizon.status), int(ntracked));
     }
 
-    horizon.ps_ptr->origin_x(estimate.x);
-    horizon.ps_ptr->origin_y(estimate.y);
-    horizon.ps_ptr->origin_z(estimate.z);
+    patch_system& ps = *horizon.ps_ptr;
+    const fp old_x = ps.origin_x();
+    const fp old_y = ps.origin_y();
+    const fp old_z = ps.origin_z();
+
+    // h(theta,phi) is a radial graph about the patch-system origin.  Keeping
+    // h unchanged while moving that origin is the exact representation of a
+    // rigid translation of the previous surface, which is the desired
+    // puncture-tracking predictor for an already-found horizon.  (Rewriting
+    // h to represent the old surface about the new origin would instead keep
+    // the predictor at its stale physical location.)
+    ps.origin_x(estimate.x);
+    ps.origin_y(estimate.y);
+    ps.origin_z(estimate.z);
     set_initial_guess_center(horizon.initial_guess_info,
                              estimate.x, estimate.y, estimate.z);
     if (state.my_proc == 0 && state.verbose_info.print_physics_details) {
       CCTK_VInfo(CCTK_THORNSTRING,
                  "Horizon %d search origin set from puncture hierarchy to "
-                 "(%.17g,%.17g,%.17g)",
+                 "(%.17g,%.17g,%.17g), translation=(%.17g,%.17g,%.17g)",
                  hn, double(estimate.x), double(estimate.y),
-                 double(estimate.z));
+                 double(estimate.z), double(estimate.x - old_x),
+                 double(estimate.y - old_y), double(estimate.z - old_z));
     }
   }
 }
@@ -314,6 +320,10 @@ void promote_candidate_slot(const int candidate_hn)
   candidate.inside_confirmed_merger = false;
   candidate.initial_find_flag = false;
   candidate.really_initial_find_flag = false;
+  // A promoted candidate owns a converged common-parent surface.  If a later
+  // Newton solve fails, retain and retry that translated surface rather than
+  // replacing it with the original spherical candidate guess.
+  candidate.initial_guess_info.reset_horizon_after_not_finding = false;
   candidate.candidate_inactive_checks = 0;
 
   if (state.my_proc == 0) {
@@ -1302,6 +1312,19 @@ for (int hn = 1; hn <= state.my_hs->N_horizons(); ++ hn)
 }
 
 if (! find_any) return;
+
+// Promotion gives a daughter an already-converged common-parent surface.  The
+// initial-guess settings themselves are not checkpointed, so reassert this
+// invariant here as well as in promote_candidate_slot().  This also ensures a
+// recovered, promoted daughter backtracks to its last good surface after a
+// failed Newton solve instead of reverting to its obsolete spherical guess.
+for (int hn = 1; hn <= state.my_hs->N_horizons(); ++hn) {
+  struct AH_data& AH_data = *state.AH_data_array[hn];
+  if (AH_data.status == horizon_status__confirmed &&
+      AH_data.has_been_found && !AH_data.parent_horizons.empty()) {
+    AH_data.initial_guess_info.reset_horizon_after_not_finding = false;
+  }
+}
 
 if (state.timer_handle >= 0)
    then CCTK_TimerResetI(state.timer_handle);
